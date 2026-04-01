@@ -1,50 +1,32 @@
-name: Sync Anime Dataset
-on:
-  schedule:
-    - cron: "0 2 * * *"   # 02:00 UTC daily (safe delay)
-  workflow_dispatch:
-jobs:
-  sync:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Download latest dataset (with fallback)
+- name: Merge new data into data.csv (deduplicated)
         run: |
-          set -e
-          TODAY=$(date -u +%Y%m%d)
-          YESTERDAY=$(date -u -d "yesterday" +%Y%m%d)
-          URL_TODAY="https://raw.githubusercontent.com/LeoRigasaki/Anime-dataset/main/data/raw/anilist_seasonal_${TODAY}.csv"
-          URL_YESTERDAY="https://raw.githubusercontent.com/LeoRigasaki/Anime-dataset/main/data/raw/anilist_seasonal_${YESTERDAY}.csv"
-          echo "Trying: $URL_TODAY"
-          if curl -f -o new_data.csv "$URL_TODAY"; then
-            echo "Downloaded today's dataset"
-          else
-            echo "Falling back to yesterday..."
-            curl -f -o new_data.csv "$URL_YESTERDAY"
-          fi
-
-      - name: Merge new data into data.csv (deduplicated)
-        run: |
+          pip install chardet -q
           python3 - <<'EOF'
           import csv
           import os
+          import chardet
 
           DEDUP_KEY = "anime_id"
 
+          def detect_encoding(path):
+              with open(path, "rb") as f:
+                  raw = f.read(100_000)   # sample first 100KB
+              result = chardet.detect(raw)
+              enc = result.get("encoding") or "utf-8"
+              print(f"Detected encoding for {path}: {enc} (confidence {result.get('confidence', '?')})")
+              return enc
+
           def read_csv(path):
-              with open(path, newline="", encoding="utf-8") as f:
+              enc = detect_encoding(path)
+              with open(path, newline="", encoding=enc, errors="replace") as f:
                   reader = csv.DictReader(f)
                   return reader.fieldnames, list(reader)
 
           new_fieldnames, new_rows = read_csv("new_data.csv")
 
-          # If data.csv already exists, merge; otherwise just use the new file
           if os.path.exists("data.csv") and os.path.getsize("data.csv") > 0:
               existing_fieldnames, existing_rows = read_csv("data.csv")
 
-              # Existing rows indexed by dedup key for O(1) lookup
               seen = {row[DEDUP_KEY]: row for row in existing_rows if DEDUP_KEY in row}
               added = 0
 
@@ -54,7 +36,6 @@ jobs:
                       seen[key] = row
                       added += 1
 
-              # Merge fieldnames: keep existing order, append any new columns
               all_fields = list(existing_fieldnames)
               for f in new_fieldnames:
                   if f not in all_fields:
@@ -67,38 +48,10 @@ jobs:
               merged_rows = new_rows
               print(f"No existing data.csv — using new file as base ({len(merged_rows)} rows)")
 
+          # Always write output as UTF-8
           with open("data.csv", "w", newline="", encoding="utf-8") as f:
               writer = csv.DictWriter(f, fieldnames=all_fields, extrasaction="ignore")
               writer.writeheader()
               writer.writerows(merged_rows)
 
           EOF
-
-      - name: Trim columns and save as anime.csv
-        run: |
-          python3 - <<'EOF'
-          import csv
-
-          KEEP = {"anime_id", "mal_id", "title", "english_title", "user_preferred_title", "cover_image_large"}
-
-          with open("data.csv", newline="", encoding="utf-8") as infile, \
-               open("anime.csv", "w", newline="", encoding="utf-8") as outfile:
-              reader = csv.DictReader(infile)
-              fieldnames = [f for f in reader.fieldnames if f in KEEP]
-              writer = csv.DictWriter(outfile, fieldnames=fieldnames, extrasaction="ignore")
-              writer.writeheader()
-              writer.writerows(reader)
-
-          print(f"Done — kept columns: {fieldnames}")
-          EOF
-
-      - name: Commit & push if changed
-        run: |
-          git config user.name "dataset-bot"
-          git config user.email "bot@example.com"
-          git add data.csv anime.csv
-          if git diff --cached --quiet; then
-            echo "No changes"
-          else
-            git commit -m "Update dataset"
-            git push
