@@ -14,10 +14,11 @@ jobs:
         run: |
           git clone https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git repo
 
-      - name: Download and process dataset
+      - name: Download, trim, and commit
+        shell: bash
         run: |
+          set -euo pipefail
           cd repo
-          set -e
 
           TODAY=$(date -u +%Y%m%d)
           YESTERDAY=$(date -u -d "yesterday" +%Y%m%d)
@@ -25,49 +26,42 @@ jobs:
           URL_TODAY="https://raw.githubusercontent.com/LeoRigasaki/Anime-dataset/main/data/raw/anilist_seasonal_${TODAY}.csv"
           URL_YESTERDAY="https://raw.githubusercontent.com/LeoRigasaki/Anime-dataset/main/data/raw/anilist_seasonal_${YESTERDAY}.csv"
 
-          echo "Trying: $URL_TODAY"
+          echo "Trying today's file: $URL_TODAY"
           if curl -f -o raw.csv "$URL_TODAY"; then
             echo "Downloaded today's dataset"
           else
-            echo "Falling back to yesterday..."
+            echo "Falling back to yesterday: $URL_YESTERDAY"
             curl -f -o raw.csv "$URL_YESTERDAY"
           fi
 
-          echo "Trimming columns..."
-
-          python3 <<EOF
+          python3 - <<'PY'
 import csv
 
 input_file = "raw.csv"
 output_file = "anime.csv"
-
 columns = [
     "anime_id",
     "mal_id",
     "title",
     "english_title",
     "user_preferred_title",
-    "cover_image_large"
+    "cover_image_large",
 ]
 
-with open(input_file, newline='', encoding="utf-8") as infile:
+with open(input_file, newline="", encoding="utf-8") as infile, open(output_file, "w", newline="", encoding="utf-8") as outfile:
     reader = csv.DictReader(infile)
-
-    with open(output_file, "w", newline='', encoding="utf-8") as outfile:
-        writer = csv.DictWriter(outfile, fieldnames=columns)
-        writer.writeheader()
-
-        for row in reader:
-            writer.writerow({col: row.get(col, "") for col in columns})
-EOF
+    writer = csv.DictWriter(outfile, fieldnames=columns)
+    writer.writeheader()
+    for row in reader:
+        writer.writerow({col: row.get(col, "") for col in columns})
+PY
 
           rm raw.csv
 
           git config user.name "dataset-bot"
-          git config user.email "bot@example.com"
+          git config user.email "dataset-bot@users.noreply.github.com"
 
           git add anime.csv
-
           if git diff --cached --quiet; then
             echo "No changes"
           else
