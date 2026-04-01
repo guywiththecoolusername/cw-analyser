@@ -2,8 +2,8 @@ name: Sync Anime Dataset
 
 on:
   schedule:
-    - cron: "0 2 * * *"   # runs daily at 02:00 UTC
-  workflow_dispatch:      # allows manual run
+    - cron: "0 2 * * *"   # 02:00 UTC daily (safe delay)
+  workflow_dispatch:
 
 jobs:
   sync:
@@ -13,38 +13,34 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Get dates
-        id: dates
+      - name: Download latest dataset (with fallback)
         run: |
-          echo "today=$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
-          echo "yesterday=$(date -u -d 'yesterday' +%Y%m%d)" >> $GITHUB_OUTPUT
+          set -e
 
-      - name: Download dataset (with fallback)
-        run: |
-          url1="https://raw.githubusercontent.com/LeoRigasaki/Anime-dataset/main/data/raw/anilist_seasonal_${{ steps.dates.outputs.today }}.csv"
-          url2="https://raw.githubusercontent.com/LeoRigasaki/Anime-dataset/main/data/raw/anilist_seasonal_${{ steps.dates.outputs.yesterday }}.csv"
+          TODAY=$(date -u +%Y%m%d)
+          YESTERDAY=$(date -u -d "yesterday" +%Y%m%d)
 
-          echo "Trying today..."
-          curl -f -o data.csv $url1 || (
-            echo "Falling back to yesterday..."
-            curl -f -o data.csv $url2
-          )
+          URL_TODAY="https://raw.githubusercontent.com/LeoRigasaki/Anime-dataset/main/data/raw/anilist_seasonal_${TODAY}.csv"
+          URL_YESTERDAY="https://raw.githubusercontent.com/LeoRigasaki/Anime-dataset/main/data/raw/anilist_seasonal_${YESTERDAY}.csv"
 
-      - name: Check for changes
-        run: |
-          if git diff --quiet data.csv; then
-            echo "No changes"
-            echo "changed=false" >> $GITHUB_ENV
+          echo "Trying: $URL_TODAY"
+          if curl -f -o data.csv "$URL_TODAY"; then
+            echo "Downloaded today's dataset"
           else
-            echo "File changed"
-            echo "changed=true" >> $GITHUB_ENV
+            echo "Falling back to yesterday..."
+            curl -f -o data.csv "$URL_YESTERDAY"
           fi
 
-      - name: Commit & push
-        if: env.changed == 'true'
+      - name: Commit & push if changed
         run: |
           git config user.name "dataset-bot"
           git config user.email "bot@example.com"
+
           git add data.csv
-          git commit -m "Update dataset"
-          git push
+
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "Update dataset"
+            git push
+          fi
