@@ -1,8 +1,8 @@
-name: Sync Anime Dataset
+name: Sync & Trim Anime Dataset
 
 on:
   schedule:
-    - cron: "0 2 * * *"   # 02:00 UTC daily (safe delay)
+    - cron: "0 2 * * *"   # 02:00 UTC
   workflow_dispatch:
 
 jobs:
@@ -10,11 +10,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Download latest dataset (with fallback)
+      - name: Clone repo
         run: |
+          git clone https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git repo
+          cd repo
+
           set -e
 
           TODAY=$(date -u +%Y%m%d)
@@ -24,23 +24,51 @@ jobs:
           URL_YESTERDAY="https://raw.githubusercontent.com/LeoRigasaki/Anime-dataset/main/data/raw/anilist_seasonal_${YESTERDAY}.csv"
 
           echo "Trying: $URL_TODAY"
-          if curl -f -o data.csv "$URL_TODAY"; then
+          if curl -f -o raw.csv "$URL_TODAY"; then
             echo "Downloaded today's dataset"
           else
             echo "Falling back to yesterday..."
-            curl -f -o data.csv "$URL_YESTERDAY"
+            curl -f -o raw.csv "$URL_YESTERDAY"
           fi
 
-      - name: Commit & push if changed
-        run: |
+          echo "Trimming columns..."
+
+          python3 << 'EOF'
+import csv
+
+input_file = "raw.csv"
+output_file = "anime.csv"
+
+columns = [
+    "anime_id",
+    "mal_id",
+    "title",
+    "english_title",
+    "user_preferred_title",
+    "cover_image_large"
+]
+
+with open(input_file, newline='', encoding="utf-8") as infile:
+    reader = csv.DictReader(infile)
+
+    with open(output_file, "w", newline='', encoding="utf-8") as outfile:
+        writer = csv.DictWriter(outfile, fieldnames=columns)
+        writer.writeheader()
+
+        for row in reader:
+            writer.writerow({col: row.get(col, "") for col in columns})
+EOF
+
+          rm raw.csv
+
           git config user.name "dataset-bot"
           git config user.email "bot@example.com"
 
-          git add data.csv
+          git add anime.csv
 
           if git diff --cached --quiet; then
             echo "No changes"
           else
-            git commit -m "Update dataset"
+            git commit -m "Update trimmed anime dataset"
             git push
           fi
