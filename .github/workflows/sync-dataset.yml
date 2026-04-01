@@ -111,3 +111,4 @@ jobs:
           else
             git commit -m "Update dataset"
             git push
+            fi
