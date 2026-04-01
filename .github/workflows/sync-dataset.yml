@@ -2,7 +2,7 @@ name: Sync & Trim Anime Dataset
 
 on:
   schedule:
-    - cron: "0 2 * * *"   # 02:00 UTC
+    - cron: "0 2 * * *"
   workflow_dispatch:
 
 jobs:
@@ -13,8 +13,10 @@ jobs:
       - name: Clone repo
         run: |
           git clone https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git repo
-          cd repo
 
+      - name: Download and process dataset
+        run: |
+          cd repo
           set -e
 
           TODAY=$(date -u +%Y%m%d)
@@ -33,7 +35,7 @@ jobs:
 
           echo "Trimming columns..."
 
-          python3 << 'EOF'
+          python3 <<EOF
 import csv
 
 input_file = "raw.csv"
