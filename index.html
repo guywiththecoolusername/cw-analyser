@@ -339,7 +339,9 @@ function detectType(content, filename) {
   if (ext === 'json' || ext === '') {
     try {
       const p = JSON.parse(content);
-      // cw-export: has meta.site OR has watching/finished arrays with rank
+      // self-export from cw-analyse: has meta.exportedAt + anime array
+      if (p.meta?.exportedAt && Array.isArray(p.anime)) return 'cw';
+      // cw-export userscript: has meta.site/scrapedAt + watching/finished arrays
       if (p.meta?.site || p.meta?.scrapedAt) {
         if (p.watching !== undefined || p.finished !== undefined) return 'cw';
       }
@@ -430,23 +432,42 @@ function renderFileList() {
 //  PARSERS
 // ══════════════════════════════════════════════
 function parseCw(data, prefix) {
-  return [...(data.watching||[]),...(data.finished||[])].map((a, i) => ({
-    _id:       (prefix||'') + (a.movieId??a.slug??a.title),
-    slug:      a.slug??null, episodeId:a.episodeId??null, malId:null, anilistId:null,
+  // handle both cw-export format (watching/finished arrays)
+  // and cw-analyse self-export format (anime array)
+  let items;
+  if (Array.isArray(data.anime)) {
+    items = data.anime;
+  } else {
+    items = [...(data.watching||[]),...(data.finished||[])];
+  }
+  return items.map((a, i) => ({
+    _id:       (prefix||'') + (a._id??a.movieId??a.slug??a.title),
+    slug:      a.slug??null, episodeId:a.episodeId??null,
+    malId:     a.malId??null, anilistId:a.anilistId??null,
     title:     a.title??null, titleJp:a.titleJp??null,
-    thumb:     a.thumbnail??null, banner:null, url:a.url??null,
-    epCur:     a.episodes?.current??null, epTot:a.episodes?.total??null,
-    epSub:     a.episodes?.sub??null,     epDub:a.episodes?.dub??null,
-    epWatched: a.episodes?.watched??null,
-    timeCur:   a.time?.current??null,  timeTot:a.time?.total??null,
-    timeCurSec:a.time?.currentSec??0,  timeTotSec:a.time?.totalSec??0,
-    prog:      a.time?.progressPct??null,
-    status:    a.status??null, score:null,
-    startDate:null, finishDate:null, rewatching:false,
+    thumb:     a.thumb??a.thumbnail??null,
+    banner:    a.banner??null,
+    url:       a.url??null,
+    // support both nested (cw-export) and flat (self-export) episode fields
+    epCur:     a.epCur??a.episodes?.current??null,
+    epTot:     a.epTot??a.episodes?.total??null,
+    epSub:     a.epSub??a.episodes?.sub??null,
+    epDub:     a.epDub??a.episodes?.dub??null,
+    epWatched: a.epWatched??a.episodes?.watched??null,
+    // support both nested (cw-export) and flat (self-export) time fields
+    timeCur:    a.timeCur??a.time?.current??null,
+    timeTot:    a.timeTot??a.time?.total??null,
+    timeCurSec: a.timeCurSec??a.time?.currentSec??0,
+    timeTotSec: a.timeTotSec??a.time?.totalSec??0,
+    prog:       a.prog??a.time?.progressPct??null,
+    status:    a.status??null,
+    score:     a.score??null,
+    startDate: a.startDate??null, finishDate:a.finishDate??null,
+    rewatching:a.rewatching??false,
     rank:      a.rank??null,
-    rankLabel: prefix ? `${prefix}${a.rank??'?'}` : null,
-    prefix:    prefix,
-    fromCw:true, fromWl:false,
+    rankLabel: prefix ? `${prefix}${a.rank??'?'}` : (a.rankLabel??null),
+    prefix:    prefix??a.prefix??null,
+    fromCw:true, fromWl:a.fromWl??false,
   }));
 }
 
