@@ -936,11 +936,6 @@ function makeCard(a,i) {
             onchange="${ro?'':'sf(this,\''+eid+'\',\'epCur\',true)'}">
           ${a.epTot!=null?`<span class="sep">/ ${a.epTot}</span>`:''}
         </div>
-        <div class="ep-chip">
-          <span class="pl">Seen</span>
-          <input type="number" value="${a.epWatched??''}" placeholder="?" ${ro?'readonly':''}
-            onchange="${ro?'':'sf(this,\''+eid+'\',\'epWatched\',true)'}">
-        </div>
       </div>
       ${a.timeTotSec>0||a.timeCurSec>0?`
       <div class="time-section">
@@ -1080,11 +1075,15 @@ function setFilter(f,btn){
 }
 
 // ══════════════════════════════════════════════
-//  SHARE — compress list to URL hash
+//  SHARE — Cloudflare Worker KV backend
+//  Set SHARE_WORKER_URL to your deployed worker URL
+//  e.g. https://cw-share.yourname.workers.dev
 // ══════════════════════════════════════════════
-function shareList() {
+const SHARE_WORKER_URL = 'https://cw-sharer.mynameismythpat.workers.dev';
+
+async function shareList() {
+  showToast('⏳ Uploading list…', 60000);
   try {
-    // Slim down the list for sharing — drop heavy/internal fields
     const slim = list.map(a => ({
       _id:a._id, title:a.title, titleJp:a.titleJp,
       malId:a.malId, anilistId:a.anilistId,
@@ -1094,25 +1093,41 @@ function shareList() {
       status:a.status, score:a.score, rank:a.rank, rankLabel:a.rankLabel,
       fromCw:a.fromCw, fromWl:a.fromWl,
     }));
-    const json = JSON.stringify(slim);
-    const encoded = btoa(unescape(encodeURIComponent(json)));
-    const url = `${location.href.split('#')[0]}#share=${encoded}`;
-    navigator.clipboard.writeText(url).then(()=>showToast('🔗 Share link copied!'));
-  } catch(e) { showToast('❌ Could not create share link'); }
+
+    const r = await fetch(`${SHARE_WORKER_URL}/share`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cwa: true, list: slim }),
+    });
+
+    if (r.status === 413) throw new Error('List too large');
+    if (r.status === 503) throw new Error('Storage unavailable — try again later');
+    if (!r.ok) throw new Error(`Server error ${r.status}`);
+
+    const { id } = await r.json();
+    const url = `${location.href.split('#')[0]}#bin=${id}`;
+    await navigator.clipboard.writeText(url);
+    showToast('🔗 Link copied! Expires in 7 days.');
+  } catch(e) {
+    showToast('❌ Share failed: ' + e.message);
+  }
 }
 
-function checkShareUrl() {
+async function checkShareUrl() {
   const hash = location.hash;
-  if (!hash.startsWith('#share=')) return;
+  if (!hash.startsWith('#bin=')) return;
+  const id = hash.slice(5);
+  if (!id) return;
   try {
-    const encoded = hash.slice(7);
-    const json = decodeURIComponent(escape(atob(encoded)));
-    const sharedList = JSON.parse(json);
-    // Wait for DOM then show dashboard
-    document.addEventListener('DOMContentLoaded', () => buildDashboard(sharedList));
-    // If DOM already loaded
-    if (document.readyState !== 'loading') buildDashboard(sharedList);
-  } catch(e) { console.warn('Invalid share URL'); }
+    const r = await fetch(`${SHARE_WORKER_URL}/share/${id}`);
+    if (r.status === 404) { alert('Share link has expired or is invalid.'); return; }
+    if (!r.ok) throw new Error(`Server error ${r.status}`);
+    const record = await r.json();
+    if (!record?.cwa || !Array.isArray(record.list)) throw new Error('Invalid share data');
+    buildDashboard(record.list);
+  } catch(e) {
+    alert('Could not load shared list: ' + e.message);
+  }
 }
 
 function showToast(msg, ms=2400) {
@@ -1132,7 +1147,7 @@ function exportXML(){
     <series_title>${xe(a.title)}</series_title>
     <series_animedb_id>${a.malId??''}</series_animedb_id>
     <series_episodes>${a.epTot??''}</series_episodes>
-    <my_watched_episodes>${a.epWatched??a.epCur??''}</my_watched_episodes>
+    <my_watched_episodes>${a.epCur??a.epWatched??''}</my_watched_episodes>
     <my_score>${a.score??0}</my_score>
     <my_status>${malSt(a.status)}</my_status>
     <my_start_date>${a.startDate??'0000-00-00'}</my_start_date>
@@ -1150,7 +1165,7 @@ function exportMAL(){
     <series_title>${xe(a.title)}</series_title>
     <series_episodes>${a.epTot??''}</series_episodes>
     <my_id>0</my_id>
-    <my_watched_episodes>${a.epWatched??a.epCur??0}</my_watched_episodes>
+    <my_watched_episodes>${a.epCur??a.epWatched??0}</my_watched_episodes>
     <my_start_date>${a.startDate??'0000-00-00'}</my_start_date>
     <my_finish_date>${a.finishDate??'0000-00-00'}</my_finish_date>
     <my_score>${a.score??0}</my_score>
