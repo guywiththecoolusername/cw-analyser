@@ -324,6 +324,10 @@ let activeFilter = 'all';
 let isReadOnly = false;
 const PREFIXES = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
+// ── Worker URL — change this to your deployed worker ──
+const SHARE_WORKER_URL = 'https://cw-sharer.mynameismythpat.workers.dev';
+const WORKER = SHARE_WORKER_URL.replace(/\/+$/, '');
+
 // Start loading DB and check for share URL immediately
 const dbReady = loadDB();
 checkShareUrl();
@@ -1076,11 +1080,7 @@ function setFilter(f,btn){
 
 // ══════════════════════════════════════════════
 //  SHARE — Cloudflare Worker KV backend
-//  Set SHARE_WORKER_URL to your deployed worker URL
-//  e.g. https://cw-share.yourname.workers.dev
 // ══════════════════════════════════════════════
-const SHARE_WORKER_URL = 'https://cw-sharer.mynameismythpat.workers.dev';
-
 async function shareList() {
   showToast('⏳ Uploading list…', 60000);
   try {
@@ -1094,7 +1094,7 @@ async function shareList() {
       fromCw:a.fromCw, fromWl:a.fromWl,
     }));
 
-    const r = await fetch(`${SHARE_WORKER_URL}/share`, {
+    const r = await fetch(`${WORKER}/share`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cwa: true, list: slim }),
