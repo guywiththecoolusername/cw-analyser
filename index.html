@@ -65,9 +65,26 @@ input[type=number]{-moz-appearance:textfield;}
 #dashboard{display:none;min-height:100vh;}
 .topbar{position:sticky;top:0;z-index:500;background:rgba(12,12,13,.92);backdrop-filter:blur(18px);border-bottom:1px solid var(--border);height:56px;padding:0 18px;display:flex;align-items:center;gap:12px;}
 .tb-logo{font-family:'Bebas Neue',sans-serif;font-size:24px;color:var(--accent);flex-shrink:0;}
-.tb-stats{display:flex;gap:12px;flex:1;font-size:.72rem;color:var(--text2);}
-.tb-stat strong{color:var(--text);font-weight:600;}
-.tb-stat.w strong{color:var(--watching);} .tb-stat.f strong{color:var(--finished);} .tb-stat.i strong{color:var(--nullcol);}
+.tb-stats{position:relative;flex:1;}
+.stats-toggle{background:none;border:1px solid var(--border);color:var(--text2);padding:4px 10px;border-radius:6px;font-size:.72rem;cursor:pointer;transition:all .13s;font-family:'DM Sans',sans-serif;white-space:nowrap;}
+.stats-toggle:hover{border-color:var(--border2);color:var(--text);}
+.stats-toggle strong{color:var(--text);font-weight:600;}
+.stats-dropdown{position:absolute;top:calc(100% + 7px);left:0;z-index:600;background:var(--bg2);border:1px solid var(--border2);border-radius:10px;padding:6px;display:none;flex-direction:column;gap:3px;min-width:170px;box-shadow:0 8px 32px rgba(0,0,0,.5);}
+.stats-dropdown.open{display:flex;}
+.sd-row{display:flex;align-items:center;gap:8px;padding:5px 9px;border-radius:6px;font-size:.74rem;font-weight:500;}
+.sd-row strong{min-width:26px;text-align:right;font-weight:700;font-size:.8rem;}
+.sd-row.sw{background:rgba(59,158,255,.13);color:var(--watching);}
+.sd-row.sf{background:rgba(46,204,113,.13);color:var(--finished);}
+.sd-row.sh{background:rgba(240,165,0,.13);color:var(--hold);}
+.sd-row.sd{background:rgba(231,76,60,.13);color:var(--dropped);}
+.sd-row.sp{background:rgba(155,89,182,.13);color:var(--plan);}
+.sd-row.si{background:rgba(255,157,46,.1);color:var(--nullcol);}
+/* lang switch */
+.lang-switch{display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;flex-shrink:0;}
+.lb{background:transparent;border:none;color:var(--text3);font-size:.7rem;font-weight:600;padding:4px 8px;cursor:pointer;transition:all .13s;font-family:'DM Sans',sans-serif;letter-spacing:.04em;}
+.lb:hover:not(:disabled){color:var(--text);background:var(--bg3);}
+.lb.on{background:var(--bg3);color:var(--text);}
+.lb:disabled{opacity:.3;cursor:not-allowed;}
 #tb-search{background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:7px;font-size:.82rem;font-family:'DM Sans',sans-serif;width:170px;outline:none;transition:border-color .2s,width .25s;}
 #tb-search:focus{border-color:var(--accent);width:220px;}
 .tb-filters{display:flex;gap:4px;}
@@ -76,6 +93,7 @@ input[type=number]{-moz-appearance:textfield;}
 .fb.on{background:var(--accent);border-color:var(--accent);color:#fff;}
 .fb.on.fw{background:var(--watching);border-color:var(--watching);}
 .fb.on.ff{background:var(--finished);border-color:var(--finished);}
+.fb.on.fp{background:var(--plan);border-color:var(--plan);}
 #sort-sel{background:var(--bg3);border:1px solid var(--border);color:var(--text2);padding:4px 8px;border-radius:6px;font-size:.72rem;cursor:pointer;outline:none;font-family:'DM Sans',sans-serif;}
 .tb-back{background:none;border:1px solid var(--border);color:var(--text2);padding:4px 10px;border-radius:6px;font-size:.72rem;cursor:pointer;transition:all .13s;flex-shrink:0;font-family:'DM Sans',sans-serif;}
 .tb-back:hover{border-color:var(--border2);color:var(--text);}
@@ -265,17 +283,30 @@ input[type=number]{-moz-appearance:textfield;}
   <div class="topbar">
     <div class="tb-logo bebas">CW·AN</div>
     <div class="tb-stats">
-      <div class="tb-stat"><strong id="s-total">0</strong> total</div>
-      <div class="tb-stat w"><strong id="s-watch">0</strong> watching</div>
-      <div class="tb-stat f"><strong id="s-fin">0</strong> finished</div>
-      <div class="tb-stat i"><strong id="s-inc">0</strong> incomplete</div>
+      <button class="stats-toggle" onclick="toggleStatsDropdown()">
+        <strong id="s-total">0</strong> total ▾
+      </button>
+      <div id="stats-dropdown" class="stats-dropdown">
+        <div class="sd-row sw"><strong id="s-watch">0</strong> Watching</div>
+        <div class="sd-row sf"><strong id="s-fin">0</strong> Finished</div>
+        <div class="sd-row sh"><strong id="s-hold">0</strong> On Hold</div>
+        <div class="sd-row sd"><strong id="s-drop">0</strong> Dropped</div>
+        <div class="sd-row sp"><strong id="s-plan">0</strong> Plan to Watch</div>
+        <div class="sd-row si"><strong id="s-inc">0</strong> No Status</div>
+      </div>
     </div>
     <input id="tb-search" type="text" placeholder="Search…" oninput="rerender()">
     <div class="tb-filters">
       <button class="fb on"  onclick="setFilter('all',this)">All</button>
       <button class="fb fw"  onclick="setFilter('watching',this)">Watching</button>
       <button class="fb ff"  onclick="setFilter('finished',this)">Finished</button>
+      <button class="fb fp"  onclick="setFilter('plan_to_watch',this)">Plan to Watch</button>
       <button class="fb"     onclick="setFilter('incomplete',this)">Incomplete</button>
+    </div>
+    <div class="lang-switch" id="lang-switch" title="Title language (requires anime.csv)">
+      <button class="lb on"  onclick="setLang('ro',this)">RO</button>
+      <button class="lb" id="lb-en" onclick="setLang('en',this)" disabled>EN</button>
+      <button class="lb" onclick="setLang('jp',this)">JP</button>
     </div>
     <select id="sort-sel" onchange="rerender()">
       <option value="rank">Recency</option>
@@ -322,6 +353,7 @@ let loadedFiles = [];   // {name, type, data, prefix}  type: 'cw'|'wl-json'|'wl-
 let list = [];
 let activeFilter = 'all';
 let isReadOnly = false;
+let titleLang = 'ro'; // 'ro' | 'en' | 'jp'
 const PREFIXES = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
 // ── Worker URL — change this to your deployed worker ──
@@ -492,8 +524,8 @@ function wlNorm(a, sk) {
     slug:null, episodeId:null, malId:malIdFrom(a.link||a.url||a.malUrl), anilistId:null,
     title:a.title??a.name??null, titleJp:a.titleJp??a.japanese_title??null,
     thumb:a.thumbnail??a.image??null, banner:null, url:a.url??a.link??null,
-    epCur:null, epTot:a.episodes??a.total_episodes??null,
-    epSub:null, epDub:null, epWatched:null,
+    epCur:a.my_watched_episodes??a.epWatched??null, epTot:a.episodes??a.total_episodes??null,
+    epSub:null, epDub:null, epWatched:a.my_watched_episodes??a.epWatched??null,
     timeCur:null, timeTot:null, timeCurSec:0, timeTotSec:0, prog:null,
     status:normSt(sk||a.status||a.my_status), score:a.score??a.my_score??null,
     startDate:a.start_date??a.my_start_date??null, finishDate:a.finish_date??a.my_finish_date??null,
@@ -516,7 +548,8 @@ function parseWlXml(xml) {
       malId:g('series_animedb_id'), title:g('series_title'), titleJp:null,
       thumb:null, banner:null,
       url:g('series_animedb_id')?`https://myanimelist.net/anime/${g('series_animedb_id')}`:null,
-      epCur:null, epTot:g('series_episodes')?+g('series_episodes'):null,
+      epCur:g('my_watched_episodes')?+g('my_watched_episodes'):null,
+      epTot:g('series_episodes')?+g('series_episodes'):null,
       epSub:null, epDub:null, epWatched:g('my_watched_episodes')?+g('my_watched_episodes'):null,
       timeCur:null, timeTot:null, timeCurSec:0, timeTotSec:0, prog:null,
       status:normSt(g('my_status')), score:g('my_score')?+g('my_score'):null,
@@ -532,6 +565,25 @@ function parseWlXml(xml) {
     });
   }
   return out;
+}
+
+// ══════════════════════════════════════════════
+//  STATUS PRIORITY (higher = preferred)
+// ══════════════════════════════════════════════
+const PRIORITY = {
+  finished: 5,
+  dropped: 4,
+  on_hold: 3,
+  plan_to_watch: 2,
+  watching: 1,
+  null: 0
+};
+function prioOf(s) { return PRIORITY[s] ?? PRIORITY['null']; }
+function bestStatus(a, b) { return prioOf(a) >= prioOf(b) ? a : b; }
+function bestEpCur(a, b) {
+  const na = a ?? 0, nb = b ?? 0;
+  const winner = na >= nb ? a : b;
+  return winner === 0 ? null : winner;
 }
 
 // ══════════════════════════════════════════════
@@ -566,7 +618,15 @@ function buildMasterList(files) {
     const items = f.type === 'wl-xml' ? parseWlXml(f.data) : parseWlJson(f.data);
     items.forEach(w => {
       const key = w.malId ?? (w.title||'').toLowerCase().trim();
-      if (!wlMap.has(key)) wlMap.set(key, w);
+      if (!wlMap.has(key)) { wlMap.set(key, w); return; }
+      // duplicate — pick best status by PRIORITY, highest epCur
+      const existing = wlMap.get(key);
+      wlMap.set(key, { ...existing,
+        status: bestStatus(w.status, existing.status),
+        epCur:  bestEpCur(w.epCur, existing.epCur),
+        epWatched: bestEpCur(w.epWatched, existing.epWatched),
+        score: w.score ?? existing.score,
+      });
     });
   });
   const wlItems = [...wlMap.values()];
@@ -591,8 +651,9 @@ function buildMasterList(files) {
         titleJp:   cw.titleJp   ?? wl.titleJp,
         thumb:     cw.thumb     ?? wl.thumb,
         epTot:     cw.epTot     ?? wl.epTot,
-        epWatched: cw.epWatched ?? wl.epWatched,
-        status:    cw.status    ?? wl.status,
+        epCur:     bestEpCur(cw.epCur, wl.epCur),
+        epWatched: bestEpCur(cw.epWatched, wl.epWatched),
+        status:    bestStatus(cw.status, wl.status),
         score:     wl.score     ?? cw.score,
         startDate: wl.startDate ?? cw.startDate,
         finishDate:wl.finishDate?? cw.finishDate,
@@ -663,6 +724,7 @@ async function loadDB() {
         anilistId: String(row.anime_id||'').trim(),
         malId:     String(row.mal_id||'').trim().replace(/\.0$/,''),
         banner:    (row.cover_image_large||'').trim(),
+        titleEn:   (row.english_title||'').trim() || null,
       };
       if (!entry.anilistId && !entry.malId) return;
       if (entry.anilistId) dbById.set(entry.anilistId, entry);
@@ -674,6 +736,9 @@ async function loadDB() {
     });
     dbLoaded = true;
     console.log(`[cw-analyse] anime.csv loaded — ${rows.length} rows`);
+    // enable EN title switch now that CSV is available
+    const lbEn = document.getElementById('lb-en');
+    if (lbEn) lbEn.disabled = false;
   } catch(e) { console.warn('[cw-analyse] anime.csv error:', e.message); }
 }
 
@@ -710,6 +775,7 @@ async function fetchBanners() {
     const h=dbLookup(a); if(!h) return;
     if(!a.anilistId&&h.anilistId) a.anilistId=h.anilistId;
     if(!a.malId&&h.malId)         a.malId=h.malId;
+    if(!a.titleEn&&h.titleEn)     a.titleEn=h.titleEn;
     if(!a.banner&&h.banner){a.banner=h.banner;updateCardBanner(a);hits++;}
   });
   setBar(10,`CSV — ${hits} banners resolved instantly`);
@@ -869,7 +935,40 @@ function updateStats() {
   document.getElementById('s-total').textContent=list.length;
   document.getElementById('s-watch').textContent=list.filter(a=>a.status==='watching').length;
   document.getElementById('s-fin').textContent  =list.filter(a=>a.status==='finished').length;
-  document.getElementById('s-inc').textContent  =list.filter(a=>!a.status||a.score===null||!a.banner).length;
+  document.getElementById('s-hold').textContent =list.filter(a=>a.status==='on_hold').length;
+  document.getElementById('s-drop').textContent =list.filter(a=>a.status==='dropped').length;
+  document.getElementById('s-plan').textContent =list.filter(a=>a.status==='plan_to_watch').length;
+  document.getElementById('s-inc').textContent  =list.filter(a=>!a.status).length;
+}
+
+function displayTitle(a) {
+  if (titleLang === 'en' && a.titleEn) return a.titleEn;
+  if (titleLang === 'jp' && a.titleJp) return a.titleJp;
+  return a.title ?? '';
+}
+
+function setLang(lang, btn) {
+  titleLang = lang;
+  document.querySelectorAll('.lang-switch .lb').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  rerender();
+}
+
+function toggleStatsDropdown() {
+  const dd = document.getElementById('stats-dropdown');
+  dd.classList.toggle('open');
+  // close on next outside click
+  if (dd.classList.contains('open')) {
+    setTimeout(() => {
+      const handler = e => {
+        if (!dd.contains(e.target) && !e.target.closest('.stats-toggle')) {
+          dd.classList.remove('open');
+          document.removeEventListener('click', handler);
+        }
+      };
+      document.addEventListener('click', handler);
+    }, 0);
+  }
 }
 
 // ══════════════════════════════════════════════
@@ -879,9 +978,10 @@ function getVisible() {
   const q=document.getElementById('tb-search').value.toLowerCase().trim();
   const s=document.getElementById('sort-sel').value;
   let out=[...list];
-  if(activeFilter==='watching')   out=out.filter(a=>a.status==='watching');
-  if(activeFilter==='finished')   out=out.filter(a=>a.status==='finished');
-  if(activeFilter==='incomplete') out=out.filter(a=>!a.status||a.score===null||!a.banner);
+  if(activeFilter==='watching')      out=out.filter(a=>a.status==='watching');
+  if(activeFilter==='finished')      out=out.filter(a=>a.status==='finished');
+  if(activeFilter==='plan_to_watch') out=out.filter(a=>a.status==='plan_to_watch');
+  if(activeFilter==='incomplete')    out=out.filter(a=>!a.status||a.score===null||!a.banner);
   if(q) out=out.filter(a=>(a.title||'').toLowerCase().includes(q)||(a.titleJp||'').toLowerCase().includes(q));
   if(s==='rank')     {} // already in rank order from buildMasterList
   if(s==='title')    out.sort((a,b)=>(a.title||'').localeCompare(b.title||''));
@@ -924,9 +1024,10 @@ function makeCard(a,i) {
     </div>
     <div class="c-body">
       <div>
-        <input class="c-title bebas" type="text" value="${x(a.title??'')}" placeholder="Title…"
+        <input class="c-title bebas" type="text" value="${x(displayTitle(a))}" placeholder="Title…"
           ${ro?'readonly':''} onchange="${ro?'':'sf(this,\''+eid+'\',\'title\')'}">
-        ${a.titleJp?`<div class="c-titlejp">${x(a.titleJp)}</div>`:''}
+        ${a.titleJp&&titleLang!=='jp'?`<div class="c-titlejp">${x(a.titleJp)}</div>`:
+          a.titleEn&&titleLang!=='en'?`<div class="c-titlejp">${x(a.titleEn)}</div>`:''}
       </div>
       <div class="stat-row">
         <div class="stat-pill"><span class="pl">Sub</span><span class="pv ${a.epSub==null?'null':''}">${a.epSub??'—'}</span></div>
