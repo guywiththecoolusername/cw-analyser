@@ -982,7 +982,7 @@ function getVisible() {
   if(activeFilter==='finished')      out=out.filter(a=>a.status==='finished');
   if(activeFilter==='plan_to_watch') out=out.filter(a=>a.status==='plan_to_watch');
   if(activeFilter==='incomplete')    out=out.filter(a=>!a.status||a.score===null||!a.banner);
-  if(q) out=out.filter(a=>(a.title||'').toLowerCase().includes(q)||(a.titleJp||'').toLowerCase().includes(q));
+  if(q) out=out.filter(a=>[a.title, a.titleJp, a.titleEn, a.titleRo].some(t=>(t||'').toLowerCase().includes(q)));
   if(s==='rank')     {} // already in rank order from buildMasterList
   if(s==='title')    out.sort((a,b)=>(a.title||'').localeCompare(b.title||''));
   if(s==='score')    out.sort((a,b)=>(b.score??-1)-(a.score??-1));
