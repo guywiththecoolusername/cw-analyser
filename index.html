@@ -368,29 +368,36 @@ input[type=number]{-moz-appearance:textfield;}
 
   <!-- Account connect -->
   <div class="account-section">
-    <div class="account-divider">or fetch from account</div>
+    <div class="account-divider">or connect your account</div>
     <div class="acct-row">
       <span class="acct-logo">🔵</span>
       <div class="acct-info">
-        <div class="acct-label">AniList username</div>
-        <input class="acct-input" id="al-username" type="text" placeholder="e.g. cooluser" autocomplete="off">
+        <div class="acct-label">AniList</div>
         <div class="acct-connected" id="al-connected" style="display:none"></div>
+        <div id="al-view-other-wrap" style="display:none;margin-top:5px">
+          <input class="acct-input" id="al-username" type="text" placeholder="Username (view-only)" autocomplete="off">
+        </div>
       </div>
-      <button class="acct-btn" id="al-fetch-btn" onclick="fetchAniList()">Fetch</button>
+      <button class="acct-btn" id="al-connect-btn" onclick="connectAniListImport()">Connect →</button>
     </div>
     <div class="acct-row">
       <span class="acct-logo">🔴</span>
       <div class="acct-info">
-        <div class="acct-label">MyAnimeList username</div>
-        <input class="acct-input" id="mal-username" type="text" placeholder="e.g. cooluser" autocomplete="off">
+        <div class="acct-label">MyAnimeList</div>
         <div class="acct-connected" id="mal-connected" style="display:none"></div>
+        <div id="mal-view-other-wrap" style="display:none;margin-top:5px">
+          <input class="acct-input" id="mal-username" type="text" placeholder="Username" autocomplete="off">
+        </div>
       </div>
-      <button class="acct-btn" id="mal-fetch-btn" onclick="fetchMAL()">Fetch</button>
+      <button class="acct-btn" id="mal-fetch-btn" onclick="toggleMalInput()">View list →</button>
+    </div>
+    <div style="text-align:center">
+      <button onclick="toggleViewOther()" style="background:none;border:none;color:var(--text3);font-size:.74rem;cursor:pointer;font-family:'DM Sans',sans-serif;text-decoration:underline;">Fetch list of another user?</button>
     </div>
   </div>
 
   <button class="go-btn" id="go-btn" disabled onclick="buildDashboard()">ANALYSE LIST</button>
-  <div class="go-hint">Add files or fetch from account</div>
+  <div class="go-hint">Add files or connect account</div>
 </div>
 
 <!-- ══════════════════════════════
@@ -870,6 +877,9 @@ async function loadDB() {
         malId:     String(row.mal_id||'').trim().replace(/\.0$/,''),
         banner:    (row.cover_image_large||'').trim(),
         titleEn:   (row.english_title||'').trim() || null,
+        titleRo:   (row.title||'').trim() || null,
+        titleJp:   (row.japanese_title||row.native_title||'').trim() || null,
+        title:     (row.user_preferred_title||row.title||'').trim() || null,
       };
       if (!entry.anilistId && !entry.malId) return;
       if (entry.anilistId) dbById.set(entry.anilistId, entry);
@@ -1189,49 +1199,65 @@ function onNilSearch() {
   const q = document.getElementById('nil-search-inp')?.value?.trim() ?? '';
   const ext = document.getElementById('nil-ext-results');
   if (!q) { if(ext) ext.innerHTML=''; return; }
-  if(ext) ext.innerHTML = '<div class="nil-spinner">Searching AniList…</div>';
-  _nilSearchTimer = setTimeout(() => runNilSearch(q), 320);
+  if(ext) ext.innerHTML = '<div class="nil-spinner">Searching…</div>';
+  _nilSearchTimer = setTimeout(() => runNilSearch(q), 300);
 }
 
-async function runNilSearch(q) {
+function runNilSearch(q) {
   const ext = document.getElementById('nil-ext-results');
   if (!ext) return;
-  try {
-    const alQ = `query($q:String){Page(perPage:8){media(search:$q,type:ANIME,sort:SEARCH_MATCH){id idMal title{userPreferred native}coverImage{large}episodes format}}}`;
-    const r = await fetch('https://graphql.anilist.co/',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({query:alQ,variables:{q}})});
-    const {data} = await r.json();
-    const results = (data?.Page?.media ?? []).filter(m => {
-      const sid = String(m.id), smid = String(m.idMal??'');
-      return !list.some(a=>a.anilistId===sid||a.malId===smid) &&
-             !notInList.some(a=>a.anilistId===sid||a.malId===smid);
-    });
-    if (!ext.isConnected) return;
-    if (!results.length) { ext.innerHTML='<div class="nil-spinner">No external results</div>'; return; }
-    // Render as nil cards (preview — clicking adds to notInList)
-    ext.innerHTML = '';
-    const g = document.createElement('div');
-    g.className = 'anime-grid';
-    results.forEach((m,i) => {
-      const preview = {
-        _id: 'al_'+m.id,
-        anilistId:String(m.id), malId:m.idMal?String(m.idMal):null,
-        title:m.title.userPreferred??m.title.native??'', titleJp:m.title.native??null,
-        titleEn:null, thumb:m.coverImage?.large??null, banner:m.coverImage?.large??null,
-        epTot:m.episodes??null, epCur:null, epSub:null, epDub:null, epWatched:null,
-        timeCur:null,timeTot:null,timeCurSec:0,timeTotSec:0,prog:null,
-        status:null, score:null, startDate:null, finishDate:null, rewatching:false,
-        rank:null, rankLabel:null, prefix:null, fromCw:false, fromWl:false,
-        genres:[], format:m.format??null, studio:null, _isPreview:true,
-      };
-      const card = makeCard(preview, i, true);
-      g.appendChild(card);
-    });
-    ext.appendChild(g);
-  } catch {
-    if (ext.isConnected) ext.innerHTML='<div class="nil-spinner">Search unavailable</div>';
+
+  if (!dbLoaded) {
+    ext.innerHTML = '<div class="nil-spinner">anime.csv not loaded — place it in the same folder</div>';
+    return;
   }
+
+  const ql = q.toLowerCase().replace(/[^\w\s]/g,'').replace(/\s+/g,' ').trim();
+
+  // Search all title columns in the DB maps
+  const seen = new Set();
+  const results = [];
+
+  // Check dbByTitle for matches (already normalised)
+  for (const [t, entry] of dbByTitle) {
+    if (t.includes(ql) && !seen.has(entry.anilistId || entry.malId)) {
+      // Skip if already in list
+      const aid = entry.anilistId, mid = entry.malId;
+      if (list.some(a=>(aid&&a.anilistId===aid)||(mid&&a.malId===mid))) continue;
+      if (notInList.some(a=>(aid&&a.anilistId===aid)||(mid&&a.malId===mid))) continue;
+      seen.add(entry.anilistId || entry.malId);
+      results.push(entry);
+      if (results.length >= 12) break;
+    }
+  }
+
+  if (!ext.isConnected) return;
+  if (!results.length) { ext.innerHTML='<div class="nil-spinner">No results in local database</div>'; return; }
+
+  ext.innerHTML = '';
+  const g = document.createElement('div');
+  g.className = 'anime-grid';
+  results.forEach((entry, i) => {
+    const preview = {
+      _id: 'db_' + (entry.anilistId || entry.malId),
+      anilistId: entry.anilistId || null,
+      malId:     entry.malId     || null,
+      title:     entry.titleRo   || entry.titleEn || entry.title || '',
+      titleJp:   entry.titleJp   || null,
+      titleEn:   entry.titleEn   || null,
+      titleRo:   entry.titleRo   || null,
+      thumb:     entry.banner    || null,
+      banner:    entry.banner    || null,
+      epTot:null, epCur:null, epSub:null, epDub:null, epWatched:null,
+      timeCur:null,timeTot:null,timeCurSec:0,timeTotSec:0,prog:null,
+      status:null, score:null, startDate:null, finishDate:null, rewatching:false,
+      rank:null, rankLabel:null, prefix:null, fromCw:false, fromWl:false,
+      genres:[], format:null, studio:null, _isPreview:true,
+    };
+    const card = makeCard(preview, i, true);
+    g.appendChild(card);
+  });
+  ext.appendChild(g);
 }
 
 function isMobile(){return window.innerWidth<=640;}
@@ -1701,9 +1727,9 @@ function setConnected(acct) {
   if (acct) {
     btn.textContent = `✓ ${acct.username}`;
     btn.classList.add('connected');
-    sync.style.display = 'inline-block';
+    sync.style.display = acct.viewOnly ? 'none' : 'inline-block';
     if(discBtn) { discBtn.style.display='block'; discSep.style.display='block'; }
-    if(alBtn) alBtn.textContent = `🔵 Connected as ${acct.username}`;
+    if(alBtn) alBtn.textContent = `🔵 ${acct.viewOnly ? '👁 ' : '✓ '}${acct.username}`;
   } else {
     btn.textContent = '⚡ Connect';
     btn.classList.remove('connected');
@@ -1715,6 +1741,7 @@ function setConnected(acct) {
 
 function disconnectAccount() {
   sessionStorage.removeItem('al_token');
+  localStorage.removeItem('anilist_token');
   setConnected(null);
   closeConnectDrop();
   showToast('Disconnected');
@@ -1742,31 +1769,77 @@ function closeConnectDrop() {
 
 // ── AniList OAuth ──
 function connectAniList() {
-  if (connectedAccount?.type === 'anilist') return; // already connected
-  if (!alClientId) {
-    // Show first-time setup inside the dropdown
-    showCidSetup();
+  if (connectedAccount?.type === 'anilist') return;
+  if (!alClientId) { showCidSetup(); toggleConnectDrop(); return; }
+  doAniListPopup();
+}
+
+function connectAniListImport() {
+  const viewOther = document.getElementById('al-view-other-wrap')?.style.display !== 'none';
+  if (viewOther) {
+    const u = document.getElementById('al-username')?.value?.trim();
+    if (!u) { showToast('Enter a username'); return; }
+    fetchAniListByUser(u, true);
     return;
   }
-  doAniListRedirect();
+  if (!alClientId) { showCidSetup(); return; }
+  doAniListPopup();
 }
 
-function doAniListRedirect() {
-  const redirect = location.href.split('#')[0];
-  location.href = `https://anilist.co/api/v2/oauth/authorize?client_id=${alClientId}&response_type=token&redirect_uri=${encodeURIComponent(redirect)}`;
+function toggleViewOther() {
+  const alWrap  = document.getElementById('al-view-other-wrap');
+  const malWrap = document.getElementById('mal-view-other-wrap');
+  const show = alWrap.style.display === 'none';
+  alWrap.style.display  = show ? 'block' : 'none';
+  malWrap.style.display = show ? 'block' : 'none';
+  document.getElementById('al-connect-btn').textContent  = show ? 'Fetch (view-only)' : 'Connect →';
+  document.getElementById('mal-fetch-btn').textContent   = show ? 'Fetch' : 'View list →';
 }
+
+function toggleMalInput() {
+  const wrap = document.getElementById('mal-view-other-wrap');
+  if (wrap.style.display === 'none') { wrap.style.display = 'block'; }
+  else { const u = document.getElementById('mal-username')?.value?.trim(); if (u) fetchMAL(); }
+}
+
+function doAniListPopup() {
+  const authUrl = `https://anilist.co/api/v2/oauth/authorize?client_id=${alClientId}&response_type=token`;
+  const popup = window.open(authUrl, '_blank', 'width=520,height=720,noopener=no');
+  if (!popup || popup.closed) {
+    showToast('⚠️ Popup blocked!', 4000);
+    setTimeout(() => { if (confirm('Popup blocked. Open auth in new tab?')) window.open(authUrl, '_blank'); }, 300);
+  }
+}
+
+function doAniListRedirect() { doAniListPopup(); }
+
+window.addEventListener('message', async (event) => {
+  if (event.data?.type !== 'ANILIST_AUTH_SUCCESS') return;
+  const token = event.data.token || localStorage.getItem('anilist_token');
+  if (!token) return;
+  localStorage.setItem('anilist_token', token);
+  try {
+    const r = await fetch('https://graphql.anilist.co/',{method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+      body:JSON.stringify({query:'query{Viewer{name}}'})});
+    const {data} = await r.json();
+    const username = data?.Viewer?.name ?? 'AniList';
+    setConnected({type:'anilist', username, token, viewOnly:false});
+    showToast(`✓ Connected as ${username}`);
+    fetchAniListByUser(username, false, token);
+  } catch {
+    setConnected({type:'anilist', username:'AniList', token, viewOnly:false});
+  }
+});
 
 function showCidSetup() {
-  const drop = document.getElementById('conn-drop');
-  // Don't add twice
-  if (drop.querySelector('.cid-setup')) return;
+  const drop = document.getElementById('conn-drop') || document.getElementById('al-connect-btn')?.parentElement;
+  if (!drop || drop.querySelector('.cid-setup')) return;
   const div = document.createElement('div');
   div.className = 'cid-setup';
-  div.innerHTML = `
-    To connect AniList you need a free API client.<br>
-    <a href="https://anilist.co/settings/developer" target="_blank">Create one at anilist.co/settings/developer</a>
-    — set the redirect URI to:<br>
-    <code style="font-size:.7rem;color:var(--accent2);word-break:break-all">${location.href.split('#')[0]}</code>
+  div.innerHTML = `To connect AniList you need a free API client.<br>
+    <a href="https://anilist.co/settings/developer" target="_blank">Create at anilist.co/settings/developer</a><br>
+    Set redirect URI to: <code style="font-size:.7rem;color:var(--accent2);word-break:break-all">${location.origin}/auth/callback</code>
     <div class="cid-row">
       <input class="cid-inp" id="cid-inp" type="text" placeholder="Paste Client ID…" autocomplete="off">
       <button class="cid-save" onclick="saveAlClientId()">Connect →</button>
@@ -1779,279 +1852,225 @@ function saveAlClientId() {
   if (!v) { showToast('Paste your Client ID first'); return; }
   alClientId = v;
   localStorage.setItem('cwa_al_cid', v);
-  doAniListRedirect();
+  doAniListPopup();
 }
 
-function connectMAL() {
-  showToast('MAL OAuth requires a server component — not yet supported');
+function connectMAL() { showToast('MAL OAuth coming soon — use "View list" for now'); }
+
+async function fetchAniList(token) {
+  const t = token || localStorage.getItem('anilist_token');
+  if (!t) { connectAniList(); return; }
+  const vwr = await fetch('https://graphql.anilist.co/',{method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':`Bearer ${t}`},
+    body:JSON.stringify({query:'query{Viewer{name}}'})});
+  const {data} = await vwr.json();
+  fetchAniListByUser(data?.Viewer?.name ?? 'user', false, t);
 }
 
-// ══════════════════════════════════════════════
-//  ANILIST FETCH BY USERNAME
-// ══════════════════════════════════════════════
-async function fetchAniList() {
-  const username = document.getElementById('al-username').value.trim();
-  if (!username) { showToast('Enter an AniList username'); return; }
-  const btn = document.getElementById('al-fetch-btn');
-  btn.textContent = '…'; btn.classList.add('loading'); btn.disabled = true;
+async function fetchAniListByUser(username, viewOnly=false, token=null) {
+  const btn = document.getElementById('al-connect-btn') || document.getElementById('al-fetch-btn');
+  if (btn) { btn.textContent='…'; btn.disabled=true; }
 
-  const query = `
-    query($name:String){
-      MediaListCollection(userName:$name,type:ANIME){
-        lists{
-          name status isCustomList
-          entries{
-            mediaId score status progress
-            media{
-              idMal
-              title{romaji english native userPreferred}
-              coverImage{large}
-              episodes format
-              genres tags{name}
-              startDate{year}
-              studios{nodes{name isAnimationStudio}}
-            }
-          }
-        }
-      }
-    }`;
+  const query = `query($name:String){
+    MediaListCollection(userName:$name,type:ANIME){
+      lists{ name status isCustomList
+        entries{ mediaId score status progress
+          media{ idMal title{romaji english native userPreferred}
+            coverImage{large} episodes format genres tags{name rank}
+            startDate{year} studios{nodes{name isAnimationStudio}} } } } } }`;
 
   try {
-    const r = await fetch('https://graphql.anilist.co/', {
-      method:'POST',
-      headers:{'Content-Type':'application/json','Accept':'application/json'},
-      body: JSON.stringify({ query, variables:{ name: username } }),
-    });
-    if (!r.ok) throw new Error(`AniList ${r.status}`);
-    const { data, errors } = await r.json();
+    const headers = {'Content-Type':'application/json','Accept':'application/json'};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const r = await fetch('https://graphql.anilist.co/',{method:'POST',headers,body:JSON.stringify({query,variables:{name:username}})});
+    if (r.status === 401) {
+      localStorage.removeItem('anilist_token');
+      showToast('❌ Token expired — please reconnect');
+      if (btn) { btn.textContent='Connect →'; btn.disabled=false; } return;
+    }
+    const {data,errors} = await r.json();
     if (errors) throw new Error(errors[0].message);
-
     const lists = data?.MediaListCollection?.lists ?? [];
-    if (!lists.length) throw new Error('No anime found for this user');
+    if (!lists.length) throw new Error('No anime found');
 
-    // Flatten all lists into normalised items
     const items = [];
+    const origMap = new Map();
     lists.forEach(lst => {
       lst.entries.forEach(e => {
         const m = e.media;
         const mainStudio = m.studios?.nodes?.find(s=>s.isAnimationStudio)?.name ?? null;
-        items.push({
-          _id:       String(e.mediaId),
-          slug:      null, episodeId:null,
-          malId:     m.idMal ? String(m.idMal) : null,
-          anilistId: String(e.mediaId),
-          title:     m.title.userPreferred ?? m.title.romaji ?? null,
-          titleJp:   m.title.native ?? null,
-          titleEn:   m.title.english ?? null,
-          titleRo:   m.title.romaji ?? null,
-          thumb:     m.coverImage?.large ?? null,
-          banner:    m.coverImage?.large ?? null,
-          url:       null,
-          epCur:     e.progress ?? null,
-          epTot:     m.episodes ?? null,
-          epSub:null, epDub:null, epWatched: e.progress ?? null,
-          timeCur:null, timeTot:null, timeCurSec:0, timeTotSec:0, prog:null,
-          status:    alStatus(e.status),
-          score:     alScore(e.score),
-          startDate: m.startDate?.year ? `${m.startDate.year}-01-01` : null,
-          finishDate:null, rewatching: e.status==='REPEATING',
-          rank:null, rankLabel:null, prefix:null,
+        const topTags = (m.tags??[]).sort((a,b)=>b.rank-a.rank).slice(0,5).map(t=>t.name);
+        const item = {
+          _id:String(e.mediaId), slug:null, episodeId:null,
+          malId:m.idMal?String(m.idMal):null, anilistId:String(e.mediaId),
+          title:m.title.userPreferred??m.title.romaji??null, titleJp:m.title.native??null,
+          titleEn:m.title.english??null, titleRo:m.title.romaji??null,
+          thumb:m.coverImage?.large??null, banner:m.coverImage?.large??null, url:null,
+          epCur:e.progress??null, epTot:m.episodes??null,
+          epSub:null, epDub:null, epWatched:e.progress??null,
+          timeCur:null,timeTot:null,timeCurSec:0,timeTotSec:0,prog:null,
+          status:alStatus(e.status), score:alScore(e.score),
+          startDate:m.startDate?.year?`${m.startDate.year}-01-01`:null, finishDate:null,
+          rewatching:e.status==='REPEATING', rank:null, rankLabel:null, prefix:null,
           fromCw:false, fromWl:true,
-          // extra for stats
-          genres:    m.genres ?? [],
-          format:    m.format ?? null,
-          studio:    mainStudio,
-          alListName:lst.name,
-          alStatus:  e.status,
-        });
+          genres:m.genres??[], tags:topTags, format:m.format??null, studio:mainStudio,
+          alListName:lst.name, alStatus:e.status, _viewOnly:viewOnly,
+        };
+        items.push(item);
+        origMap.set(item._id, {status:item.status,score:item.score,epCur:item.epCur});
       });
     });
 
-    // Merge into existing list or set as new list
+    window._alOrigMap = origMap;
+    window._alViewOnly = viewOnly;
     mergeExternalItems(items);
-    document.getElementById('al-connected').textContent = `✓ ${items.length} anime loaded`;
-    document.getElementById('al-connected').style.display = 'block';
+    const connEl = document.getElementById('al-connected');
+    if (connEl) { connEl.textContent=`✓ ${items.length} anime${viewOnly?' (view-only)':''}`; connEl.style.display='block'; }
     document.getElementById('go-btn').disabled = false;
     showToast(`AniList: ${items.length} anime loaded`);
-
-    // Store for later use
     window._alItems = items;
-
+    if (!viewOnly && token) setConnected({type:'anilist',username,token,viewOnly:false});
   } catch(e) {
     showToast('❌ AniList: ' + e.message);
   } finally {
-    btn.textContent = 'Fetch'; btn.classList.remove('loading'); btn.disabled = false;
+    if (btn) { btn.textContent=viewOnly?'Fetch (view-only)':'Connect →'; btn.disabled=false; }
   }
 }
 
-// ══════════════════════════════════════════════
-//  MAL FETCH BY USERNAME (via Jikan)
-// ══════════════════════════════════════════════
 async function fetchMAL() {
-  const username = document.getElementById('mal-username').value.trim();
+  const username = document.getElementById('mal-username')?.value?.trim();
   if (!username) { showToast('Enter a MAL username'); return; }
   const btn = document.getElementById('mal-fetch-btn');
-  btn.textContent = '…'; btn.classList.add('loading'); btn.disabled = true;
-
+  if (btn) { btn.textContent='…'; btn.disabled=true; }
   try {
-    const items = [];
-    let offset = 0;
-    const limit = 300;
-
+    const items = []; let page = 1;
     while (true) {
-      const r = await jFetch(`https://api.jikan.moe/v4/users/${encodeURIComponent(username)}/animelist?limit=${limit}&page=${Math.floor(offset/limit)+1}`);
-      if (!r) throw new Error('Could not reach Jikan API');
+      const r = await jFetch(`https://api.jikan.moe/v4/users/${encodeURIComponent(username)}/animelist?limit=300&page=${page}`);
+      if (!r) throw new Error('Jikan unreachable');
       if (r.status === 404) throw new Error('User not found');
-
-      const entries = r.data ?? [];
-      entries.forEach(e => {
+      (r.data??[]).forEach(e => {
         const a = e.anime;
         items.push({
-          _id:       String(a.mal_id),
-          slug:null, episodeId:null,
-          malId:     String(a.mal_id),
-          anilistId: null,
-          title:     a.title ?? null,
-          titleJp:   null, titleEn:null, titleRo:a.title??null,
-          thumb:     a.images?.jpg?.large_image_url ?? a.images?.jpg?.image_url ?? null,
-          banner:    a.images?.jpg?.large_image_url ?? null,
-          url:       null,
-          epCur:     e.episodes_watched ?? null,
-          epTot:     a.episodes ?? null,
-          epSub:null, epDub:null, epWatched:e.episodes_watched??null,
-          timeCur:null, timeTot:null, timeCurSec:0, timeTotSec:0, prog:null,
-          status:    malStatus(e.watching_status === 1 ? 'watching'
-                             : e.watching_status === 2 ? 'completed'
-                             : e.watching_status === 3 ? 'on_hold'
-                             : e.watching_status === 4 ? 'dropped'
-                             : e.watching_status === 6 ? 'plan_to_watch' : ''),
-          score:     e.score || null,
-          startDate: e.watch_start_date ?? null,
-          finishDate:e.watch_end_date ?? null,
-          rewatching:e.is_rewatching ?? false,
-          rank:null, rankLabel:null, prefix:null,
-          fromCw:false, fromWl:true,
-          genres:[], format:a.type??null, studio:null,
+          _id:String(a.mal_id), slug:null, episodeId:null,
+          malId:String(a.mal_id), anilistId:null,
+          title:a.title??null, titleJp:null, titleEn:null, titleRo:a.title??null,
+          thumb:a.images?.jpg?.large_image_url??null, banner:a.images?.jpg?.large_image_url??null, url:null,
+          epCur:e.episodes_watched??null, epTot:a.episodes??null,
+          epSub:null,epDub:null,epWatched:e.episodes_watched??null,
+          timeCur:null,timeTot:null,timeCurSec:0,timeTotSec:0,prog:null,
+          status:malStatus(e.watching_status===1?'watching':e.watching_status===2?'completed':e.watching_status===3?'on_hold':e.watching_status===4?'dropped':e.watching_status===6?'plan_to_watch':''),
+          score:e.score||null, startDate:e.watch_start_date??null, finishDate:e.watch_end_date??null,
+          rewatching:e.is_rewatching??false, rank:null,rankLabel:null,prefix:null,fromCw:false,fromWl:true,
+          genres:[],format:a.type??null,studio:null,_viewOnly:true,
         });
       });
-
       if (!r.pagination?.has_next_page) break;
-      offset += limit;
-      await sleep(400); // Jikan rate limit
+      page++; await sleep(400);
     }
-
     mergeExternalItems(items);
-    document.getElementById('mal-connected').textContent = `✓ ${items.length} anime loaded`;
-    document.getElementById('mal-connected').style.display = 'block';
+    const connEl = document.getElementById('mal-connected');
+    if (connEl) { connEl.textContent=`✓ ${items.length} anime`; connEl.style.display='block'; }
     document.getElementById('go-btn').disabled = false;
     showToast(`MAL: ${items.length} anime loaded`);
-    window._malItems = items;
-
-  } catch(e) {
-    showToast('❌ MAL: ' + e.message);
-  } finally {
-    btn.textContent = 'Fetch'; btn.classList.remove('loading'); btn.disabled = false;
-  }
+  } catch(e) { showToast('❌ MAL: ' + e.message); }
+  finally { if (btn) { btn.textContent='Fetch'; btn.disabled=false; } }
 }
 
-// Merge external items into loadedFiles as a synthetic 'wl-json' entry
 function mergeExternalItems(items) {
-  // Remove previous external entry if any
   loadedFiles = loadedFiles.filter(f => !f._external);
-  loadedFiles.push({ name: `account (${items.length})`, type:'wl-json', data:{ _flat:items }, prefix:null, _external:true });
-  assignPrefixes();
-  renderFileList();
+  loadedFiles.push({name:`account (${items.length})`,type:'wl-json',data:{_flat:items},prefix:null,_external:true});
+  assignPrefixes(); renderFileList();
 }
 
-// Handle _flat array format in parseWlJson
 const _origParseWlJson = parseWlJson;
 function parseWlJson(wl) {
   if (Array.isArray(wl._flat)) return wl._flat;
   return _origParseWlJson(wl);
 }
 
-// ══════════════════════════════════════════════
-//  SYNC TO ACCOUNT
-// ══════════════════════════════════════════════
 async function syncToAccount() {
   if (!connectedAccount) { showToast('No account connected'); return; }
+  if (connectedAccount.viewOnly) { showToast('View-only — cannot sync'); return; }
   if (!list.length) { showToast('Nothing to sync'); return; }
-
-  if (connectedAccount.type === 'anilist') {
-    await syncToAniList();
-  } else {
-    showToast('MAL write requires OAuth — coming soon');
-  }
+  if (connectedAccount.type === 'anilist') await syncToAniList();
+  else showToast('MAL write requires OAuth — coming soon');
 }
 
 async function syncToAniList() {
-  const token = sessionStorage.getItem('al_token');
-  if (!token) {
-    // Need to auth first — use stored client ID or show setup
-    if (!alClientId) { showCidSetup(); toggleConnectDrop(); return; }
-    doAniListRedirect();
-    return;
-  }
+  const token = connectedAccount?.token || localStorage.getItem('anilist_token');
+  if (!token) { if (!alClientId) { showCidSetup(); toggleConnectDrop(); return; } doAniListPopup(); return; }
   await doAniListSync(token);
 }
 
 async function doAniListSync(token) {
-  const toSync = list.filter(a => a.anilistId && a.status);
-  if (!toSync.length) { showToast('No AniList-linked anime to sync'); return; }
+  const origMap = window._alOrigMap ?? new Map();
+  const changed = list.filter(a => {
+    if (!a.anilistId) return false;
+    const orig = origMap.get(a._id);
+    if (!orig) return true;
+    return orig.status !== a.status || orig.score !== a.score || orig.epCur !== a.epCur;
+  });
+  if (!changed.length) { showToast('No changes to sync'); return; }
 
-  showToast(`⏳ Syncing ${toSync.length} anime…`, 60000);
-  let ok = 0, fail = 0;
+  const bar=document.getElementById('fetch-bar'),fill=document.getElementById('fb-fill'),
+        msg=document.getElementById('fetch-msg'),pct=document.getElementById('fetch-pct');
+  bar.style.display='flex';
+  const setBar=(p,m)=>{fill.style.width=p+'%';pct.textContent=p+'%';msg.textContent=m;};
+  setBar(0,`Syncing ${changed.length} changes…`);
 
-  const mutation = `
-    mutation($mediaId:Int,$status:MediaListStatus,$score:Float,$progress:Int){
-      SaveMediaListEntry(mediaId:$mediaId,status:$status,score:$score,progress:$progress){id}
-    }`;
+  const mutation=`mutation($mediaId:Int,$status:MediaListStatus,$score:Float,$progress:Int){
+    SaveMediaListEntry(mediaId:$mediaId,status:$status,score:$score,progress:$progress){id status score progress}}`;
 
-  for (const a of toSync) {
+  const BATCH=25, CONCURRENT=3, RETRY=2;
+  let ok=0, fail=0; const failed=[];
+
+  async function syncOne(a, attempt=0) {
     try {
-      const r = await fetch('https://graphql.anilist.co/', {
-        method:'POST',
+      const r = await fetch('https://graphql.anilist.co/',{method:'POST',
         headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
-        body: JSON.stringify({ query: mutation, variables:{
-          mediaId:  parseInt(a.anilistId),
-          status:   toAlStatus(a.status),
-          score:    a.score ? a.score * 10 : 0,
-          progress: a.epCur ?? 0,
-        }}),
-      });
-      if (r.ok) ok++; else fail++;
-    } catch { fail++; }
-    await sleep(250);
+        body:JSON.stringify({query:mutation,variables:{
+          mediaId:parseInt(a.anilistId), status:toAlStatus(a.status),
+          score:a.score?a.score*10:0, progress:a.epCur??0}})});
+      if (r.status===401) { localStorage.removeItem('anilist_token'); throw new Error('TOKEN_EXPIRED'); }
+      const json=await r.json();
+      if (json.errors) throw new Error(json.errors[0].message);
+      origMap.set(a._id,{status:a.status,score:a.score,epCur:a.epCur});
+      ok++;
+    } catch(e) {
+      if (e.message==='TOKEN_EXPIRED') { showToast('❌ Token expired — reconnect'); bar.style.display='none'; return; }
+      if (attempt<RETRY) { await sleep(600); return syncOne(a,attempt+1); }
+      fail++; failed.push(a.title??a._id);
+    }
   }
-  showToast(`✓ Synced ${ok} anime${fail ? `, ${fail} failed` : ''}`);
+
+  for (let i=0;i<changed.length;i+=BATCH) {
+    const batch=changed.slice(i,i+BATCH);
+    for (let j=0;j<batch.length;j+=CONCURRENT) {
+      await Promise.all(batch.slice(j,j+CONCURRENT).map(a=>syncOne(a)));
+      await sleep(350);
+    }
+    setBar(Math.round((i+batch.length)/changed.length*95),`Syncing… ${Math.min(i+BATCH,changed.length)}/${changed.length}`);
+  }
+
+  setBar(100,`Done — ${ok} synced${fail?`, ${fail} failed`:''}`);
+  await sleep(1400); bar.style.display='none';
+  if (fail) showToast(`⚠️ ${fail} failed: ${failed.slice(0,3).join(', ')}${failed.length>3?'…':''}`);
+  else showToast(`✓ ${ok} changes synced`);
 }
 
-// Check for OAuth token in URL hash on page load
 async function checkOAuthCallback() {
-  const hash = location.hash;
-  if (!hash.includes('access_token=')) return;
-  const params = new URLSearchParams(hash.slice(1));
-  const token = params.get('access_token');
-  if (!token) return;
-
-  sessionStorage.setItem('al_token', token);
-  history.replaceState(null, '', location.pathname);
-
-  // Fetch the authenticated user's name from AniList
+  const savedToken = localStorage.getItem('anilist_token');
+  if (!savedToken || connectedAccount?.token === savedToken) return;
   try {
-    const r = await fetch('https://graphql.anilist.co/', {
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
-      body: JSON.stringify({ query: 'query{Viewer{name}}' }),
-    });
-    const { data } = await r.json();
+    const r = await fetch('https://graphql.anilist.co/',{method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':`Bearer ${savedToken}`},
+      body:JSON.stringify({query:'query{Viewer{name}}'})});
+    if (r.status===401) { localStorage.removeItem('anilist_token'); return; }
+    const {data} = await r.json();
     const username = data?.Viewer?.name ?? 'AniList';
-    setConnected({ type:'anilist', username, token });
-    showToast(`✓ Connected as ${username} — click Sync to push changes`);
-  } catch {
-    setConnected({ type:'anilist', username:'AniList', token });
-    showToast('✓ AniList connected — click Sync to push changes');
-  }
+    setConnected({type:'anilist',username,token:savedToken,viewOnly:false});
+    showToast(`↩ Reconnected as ${username}`);
+  } catch {}
 }
 
 
