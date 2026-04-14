@@ -720,7 +720,8 @@ function makeCard(a,i,isNil=false) {
   const el=document.createElement('div');
   el.className='card' + (isNil?' nil-card':'');
   el.dataset.id=String(a._id);
-  // el.style.animationDelay=Math.min(i*22,220)+'ms'; // animations off
+  // Simple fade-in, no stagger delay
+  el.style.animation = 'fadeUp .15s ease both';
   
   if(isMobile()&&!isNil) el.onclick=()=>openSheet(a);
   if(isNil&&a._isPreview) el.onclick=()=>stageFromPreview(a);
@@ -1062,10 +1063,9 @@ function connectMAL() { showToast('MAL OAuth coming soon — use "View list" for
 
 function alScore(s) {
   if (!s || s === 0) return null;
-  // If score is > 10 (e.g., 85/100), divide by 10. 
-  // If it's already 1-10, keep it as is.
-  let score = s > 10 ? Math.round(s / 10) : Math.round(s);
-  return Math.max(1, Math.min(10, score)); // Clamp between 1-10
+  // AniList scores are always 0–100. Convert to 1–10 scale.
+  const score = Math.round(s / 10);
+  return score < 1 ? null : Math.min(10, score);
 }
 function alStatus(s){
   return {CURRENT:'watching',COMPLETED:'finished',PAUSED:'on_hold',
