@@ -1,0 +1,9 @@
+~~(not imp)Add Card game style animation as NIL card goes to IL
+Anilist auth fix
+- whole thing has alot of issues fix it
+- remove connect button on analysig page, only sync is needed there~~
+
+MAl everything is worng, use mal api
+~~Use Large instead of medium, simply change the medium in the urls of anilist banner to "large"~~
+Optimize the animation
+score fix where some are 10 while they arent that
