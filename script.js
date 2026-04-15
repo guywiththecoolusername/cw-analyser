@@ -1204,12 +1204,14 @@ function connectAniListImport() {
 
 function connectMAL() { showToast('Use the Connect button in the import screen'); }
 
-function alScore(s) {
+ function alScore(s) {
   if (!s || s === 0) return null;
-  // AniList scores are always 0–100. Convert to 1–10 scale.
-  const score = Math.round(s / 10);
-  return score < 1 ? null : Math.min(10, score);
-}
+  // If score is > 10 (e.g., 85/100), divide by 10.
+  // If it's already 1-10, keep it as is.
+
+  let score = s > 10 ? Math.round(s / 10) : Math.round(s);
+  return Math.max(1, Math.min(10, score)); // Clamp between 1-10
+} 
 function alStatus(s){
   return {CURRENT:'watching',COMPLETED:'finished',PAUSED:'on_hold',
           DROPPED:'dropped',PLANNING:'plan_to_watch',REPEATING:'watching'}[s] ?? null;
