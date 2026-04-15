@@ -1,2 +1,2 @@
-(imp) score fix
-Mal sync (cors) worker fix 
+(imp) score fix: its not 1-100, its 1.0-10.0 (one decimal)
+Mal sync (cors) worker fix
