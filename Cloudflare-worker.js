@@ -83,7 +83,7 @@ function json(obj, status, cors) {
 
 async function handleMalToken(request) {
   const ALLOWED_ORIGINS = [
-    'https://yourdomain.com',       // <-- replace with your actual site origin(s)
+    'https://cw-analyser.vercel.app',       // <-- replace with your actual site origin(s)
     'http://localhost:8000',             // local dev
     'http://127.0.0.1:8000',
   ];
