@@ -220,6 +220,10 @@ input[type=number]{-moz-appearance:textfield;}
 .acct-row-connected{border-color:rgba(46,204,113,.3)!important;background:rgba(46,204,113,.05)!important;}
 .acct-btn-analyse{border-color:var(--finished)!important;color:var(--finished)!important;}
 .acct-btn-analyse:hover{background:rgba(46,204,113,.12)!important;}
+.acct-row-mal.acct-row-connected{border-color:rgba(232,76,60,.3)!important;background:rgba(232,76,60,.05)!important;}
+.acct-connected-mal{color:var(--dropped);}
+.acct-btn-mal{border-color:var(--dropped)!important;color:var(--dropped)!important;}
+.acct-btn-mal:hover{background:rgba(232,76,60,.12)!important;}
 
 .nil-section{margin-top:32px;}
 .nil-hdr{display:flex;align-items:center;gap:10px;margin-bottom:14px;}

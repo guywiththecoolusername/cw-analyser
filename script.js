@@ -10,6 +10,7 @@ let isReadOnly = false;
 let titleLang = 'ro'; 
 
 const AL_CLIENT_ID = '39139'; // Hardcoded as requested
+const MAL_CLIENT_ID = '52944d3920b9e1037149d2e207849e57'; // <-- Fill in your MAL client ID
 const PREFIXES = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 const SHARE_WORKER_URL = 'https://cw-sharer.mynameismythpat.workers.dev';
 const WORKER = SHARE_WORKER_URL.replace(/\/+$/, '');
@@ -24,24 +25,36 @@ checkOAuthCallback();
 checkShareUrl();
 
 // ══════════════════════════════════════════════
-//  OAUTH CALLBACK HANDLER (No popup/callback.html)
+//  OAUTH CALLBACK HANDLER
 // ══════════════════════════════════════════════
 function checkOAuthCallback() {
+  // AniList uses implicit flow — token comes back in the URL hash
   const hash = window.location.hash.substring(1);
-  const params = new URLSearchParams(hash);
-  const token = params.get('access_token');
-
-  if (token) {
-    localStorage.setItem('anilist_token', token);
-    // Clean the URL so the hash doesn't sit there
-    window.history.replaceState(null, null, window.location.pathname + window.location.search);
-    verifyAniListToken(token);
+  const hashParams = new URLSearchParams(hash);
+  const alToken = hashParams.get('access_token');
+  if (alToken) {
+    localStorage.setItem('anilist_token', alToken);
+    window.history.replaceState(null, null, window.location.pathname);
+    verifyAniListToken(alToken);
     return;
   }
-  
-  // Normal startup check
-  const savedToken = localStorage.getItem('anilist_token');
-  if (savedToken) verifyAniListToken(savedToken);
+
+  // MAL uses PKCE authorization code flow — code comes back as a query param
+  const urlParams = new URLSearchParams(window.location.search);
+  const malCode = urlParams.get('code');
+  const malState = urlParams.get('state');
+  if (malCode && malState === sessionStorage.getItem('mal_state')) {
+    window.history.replaceState(null, null, window.location.pathname);
+    exchangeMalCode(malCode);
+    return;
+  }
+
+  // Normal startup — check for saved tokens
+  const savedAlToken = localStorage.getItem('anilist_token');
+  if (savedAlToken) verifyAniListToken(savedAlToken);
+
+  const savedMalToken = localStorage.getItem('mal_token');
+  if (savedMalToken) verifyMalToken(savedMalToken);
 }
 
 async function verifyAniListToken(token) {
@@ -100,6 +113,178 @@ function anilistDisconnect() {
   document.getElementById('go-btn').disabled = loadedFiles.filter(f => f.type !== 'unknown').length === 0;
 }
 
+// ══════════════════════════════════════════════
+//  MAL OAUTH2 (PKCE)
+// ══════════════════════════════════════════════
+function connectMALImport() {
+  // Generate PKCE code_verifier (plain method — MAL supports it, no SHA256 needed)
+  const verifier = generateCodeVerifier();
+  const state = generateCodeVerifier(16);
+  sessionStorage.setItem('mal_verifier', verifier);
+  sessionStorage.setItem('mal_state', state);
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: MAL_CLIENT_ID,
+    code_challenge: verifier,         // plain: challenge === verifier
+    code_challenge_method: 'plain',
+    state,
+    redirect_uri: window.location.origin + window.location.pathname,
+  });
+  window.location.href = `https://myanimelist.net/v1/oauth2/authorize?${params}`;
+}
+
+function generateCodeVerifier(len = 64) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+  const arr = new Uint8Array(len);
+  crypto.getRandomValues(arr);
+  return Array.from(arr, b => chars[b % chars.length]).join('');
+}
+
+async function exchangeMalCode(code) {
+  const verifier = sessionStorage.getItem('mal_verifier');
+  if (!verifier) { showToast('❌ MAL: Missing code verifier — try again'); return; }
+  sessionStorage.removeItem('mal_verifier');
+  sessionStorage.removeItem('mal_state');
+  try {
+    // Token exchange must go through our worker — MAL token endpoint has no CORS headers
+    const r = await fetch(`${WORKER}/mal-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: MAL_CLIENT_ID,
+        code,
+        code_verifier: verifier,
+        redirect_uri: window.location.origin + window.location.pathname,
+      }),
+    });
+    if (!r.ok) throw new Error(`Token exchange failed (${r.status})`);
+    const { access_token, refresh_token } = await r.json();
+    if (!access_token) throw new Error('No access token returned');
+    localStorage.setItem('mal_token', access_token);
+    if (refresh_token) localStorage.setItem('mal_refresh_token', refresh_token);
+    verifyMalToken(access_token);
+  } catch (e) {
+    showToast('❌ MAL: ' + e.message);
+  }
+}
+
+async function verifyMalToken(token) {
+  try {
+    const r = await fetch(`${WORKER}/mal-proxy?url=${encodeURIComponent('https://api.myanimelist.net/v2/users/@me')}`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (r.status === 401) { localStorage.removeItem('mal_token'); return; }
+    const data = await r.json();
+    const username = data.name ?? 'MAL User';
+    setConnected({ type: 'mal', username, token, viewOnly: false });
+    showMalConnected(username);
+  } catch (e) { console.error('MAL verify error', e); }
+}
+
+function showMalConnected(username) {
+  const disRow = document.getElementById('mal-disconnected-row');
+  const conRow = document.getElementById('mal-connected-row');
+  const notYou = document.getElementById('mal-not-you-wrap');
+  const nameEl = document.getElementById('mal-connected-name');
+  if (disRow) disRow.style.display = 'none';
+  if (conRow) conRow.style.display = 'flex';
+  if (nameEl) nameEl.textContent = `Connected as ${username}`;
+  if (notYou) notYou.style.display = 'block';
+}
+
+async function analyseMAL() {
+  if (!connectedAccount?.token || connectedAccount.type !== 'mal') { showToast('No MAL token'); return; }
+  const btn = document.getElementById('mal-analyse-btn');
+  if (btn) { btn.textContent = '…'; btn.disabled = true; }
+  try {
+    await fetchMALByToken(connectedAccount.token);
+    buildDashboard();
+  } catch (e) {
+    showToast('❌ MAL: ' + e.message);
+  } finally {
+    if (btn) { btn.textContent = 'Analyse list →'; btn.disabled = false; }
+  }
+}
+
+function malDisconnect() {
+  localStorage.removeItem('mal_token');
+  localStorage.removeItem('mal_refresh_token');
+  setConnected(null);
+  const dis = document.getElementById('mal-disconnected-row');
+  const con = document.getElementById('mal-connected-row');
+  const notYou = document.getElementById('mal-not-you-wrap');
+  if (dis) dis.style.display = 'flex';
+  if (con) con.style.display = 'none';
+  if (notYou) notYou.style.display = 'none';
+  loadedFiles = loadedFiles.filter(f => !f._external);
+  assignPrefixes(); renderFileList();
+  document.getElementById('go-btn').disabled = loadedFiles.filter(f => f.type !== 'unknown').length === 0;
+}
+
+async function fetchMALByToken(token) {
+  const fields = [
+    'id','title','main_picture','alternative_titles','num_episodes',
+    'genres','media_type','start_date','studios',
+    'my_list_status{status,score,num_episodes_watched,is_rewatching,start_date,finish_date}',
+  ].join(',');
+  const items = [];
+  let url = `https://api.myanimelist.net/v2/users/@me/animelist?fields=${encodeURIComponent(fields)}&limit=1000&sort=list_updated_at`;
+
+  while (url) {
+    const r = await fetch(`${WORKER}/mal-proxy?url=${encodeURIComponent(url)}`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (r.status === 401) {
+      localStorage.removeItem('mal_token');
+      throw new Error('Token expired — please reconnect');
+    }
+    if (!r.ok) throw new Error(`MAL API error ${r.status}`);
+    const json = await r.json();
+
+    (json.data ?? []).forEach(({ node: a }) => {
+      const st = a.my_list_status ?? {};
+      const pic = a.main_picture;
+      const mainStudio = a.studios?.[0]?.name ?? null;
+      items.push({
+        _id: String(a.id), slug: null, episodeId: null,
+        malId: String(a.id), anilistId: null,
+        title: a.title ?? null,
+        titleJp: a.alternative_titles?.ja ?? null,
+        titleEn: a.alternative_titles?.en ?? null,
+        titleRo: a.title ?? null,
+        thumb: pic?.large ?? pic?.medium ?? null,
+        banner: pic?.large ?? pic?.medium ?? null,
+        url: `https://myanimelist.net/anime/${a.id}`,
+        epCur: st.num_episodes_watched ?? null,
+        epTot: a.num_episodes || null,
+        epSub: null, epDub: null, epWatched: st.num_episodes_watched ?? null,
+        timeCur: null, timeTot: null, timeCurSec: 0, timeTotSec: 0, prog: null,
+        status: malStatus(st.status ?? ''),
+        score: st.score || null,
+        startDate: st.start_date ?? null,
+        finishDate: st.finish_date ?? null,
+        rewatching: st.is_rewatching ?? false,
+        rank: null, rankLabel: null, prefix: null,
+        fromCw: false, fromWl: true,
+        genres: (a.genres ?? []).map(g => g.name),
+        format: a.media_type ?? null,
+        studio: mainStudio,
+        _viewOnly: false,
+      });
+    });
+
+    url = json.paging?.next ?? null;
+    if (url) await sleep(150);
+  }
+
+  mergeExternalItems(items);
+  showToast(`MAL: ${items.length} anime loaded`);
+  // Build origMap so syncToMAL can diff against current state
+  const origMap = new Map();
+  items.forEach(a => origMap.set(a.malId, { status: a.status, score: a.score, epCur: a.epCur }));
+  window._malOrigMap = origMap;
+  window._malItems = items;
+}
 
 function detectType(content, filename) {
   const ext = filename.split('.').pop().toLowerCase();
@@ -1009,33 +1194,7 @@ function setConnected(acct) {
   }
 }
 
-function disconnectAccount() {
-  sessionStorage.removeItem('al_token');
-  localStorage.removeItem('anilist_token');
-  setConnected(null);
-  closeConnectDrop();
-  showToast('Disconnected');
-}
-
-function toggleConnectDrop() {
-  const drop = document.getElementById('conn-drop');
-  drop.classList.toggle('open');
-  if (drop.classList.contains('open')) {
-    setTimeout(() => {
-      const handler = e => {
-        if (!drop.contains(e.target) && !e.target.closest('#tb-connect')) {
-          drop.classList.remove('open');
-          document.removeEventListener('click', handler);
-        }
-      };
-      document.addEventListener('click', handler);
-    }, 0);
-  }
-}
-function closeConnectDrop() { document.getElementById('conn-drop')?.classList.remove('open'); }
-
 function connectAniList() {
-  // Current tab redirect
   window.location.href = `https://anilist.co/api/v2/oauth/authorize?client_id=${AL_CLIENT_ID}&response_type=token`;
 }
 
@@ -1043,23 +1202,7 @@ function connectAniListImport() {
   connectAniList();
 }
 
-function toggleViewOther() {
-  const alWrap  = document.getElementById('al-view-other-wrap');
-  const malWrap = document.getElementById('mal-view-other-wrap');
-  const show = alWrap.style.display === 'none';
-  alWrap.style.display  = show ? 'block' : 'none';
-  malWrap.style.display = show ? 'block' : 'none';
-  document.getElementById('al-connect-btn').textContent  = show ? 'Fetch (view-only)' : 'Connect →';
-  document.getElementById('mal-fetch-btn').textContent   = show ? 'Fetch' : 'View list →';
-}
-
-function toggleMalInput() {
-  const wrap = document.getElementById('mal-view-other-wrap');
-  if (wrap.style.display === 'none') { wrap.style.display = 'block'; }
-  else { const u = document.getElementById('mal-username')?.value?.trim(); if (u) fetchMAL(); }
-}
-
-function connectMAL() { showToast('MAL OAuth coming soon — use "View list" for now'); }
+function connectMAL() { showToast('Use the Connect button in the import screen'); }
 
 function alScore(s) {
   if (!s || s === 0) return null;
@@ -1149,42 +1292,9 @@ async function fetchAniListByUser(username, viewOnly=false, token=null) {
   }
 }
 
-async function fetchMAL() {
-  const username = document.getElementById('mal-username')?.value?.trim();
-  if (!username) { showToast('Enter a MAL username'); return; }
-  const btn = document.getElementById('mal-fetch-btn');
-  if (btn) { btn.textContent='…'; btn.disabled=true; }
-  try {
-    const items = []; let page = 1;
-    while (true) {
-      const r = await jFetch(`https://api.jikan.moe/v4/users/${encodeURIComponent(username)}/animelist?limit=300&page=${page}`);
-      if (!r) throw new Error('Jikan unreachable');
-      if (r.status === 404) throw new Error('User not found');
-      (r.data??[]).forEach(e => {
-        const a = e.anime;
-        items.push({
-          _id:String(a.mal_id), slug:null, episodeId:null, malId:String(a.mal_id), anilistId:null,
-          title:a.title??null, titleJp:null, titleEn:null, titleRo:a.title??null,
-          thumb:a.images?.jpg?.large_image_url??null, banner:a.images?.jpg?.large_image_url??null, url:null,
-          epCur:e.episodes_watched??null, epTot:a.episodes??null, epSub:null,epDub:null,epWatched:e.episodes_watched??null,
-          timeCur:null,timeTot:null,timeCurSec:0,timeTotSec:0,prog:null,
-          status:malStatus(e.watching_status===1?'watching':e.watching_status===2?'completed':e.watching_status===3?'on_hold':e.watching_status===4?'dropped':e.watching_status===6?'plan_to_watch':e.status??''),
-          score:e.score||null, startDate:e.watch_start_date??null, finishDate:e.watch_end_date??null,
-          rewatching:e.is_rewatching??false, rank:null,rankLabel:null,prefix:null,fromCw:false,fromWl:true,
-          genres:[],format:a.type??null,studio:null,_viewOnly:true,
-        });
-      });
-      if (!r.pagination?.has_next_page) break;
-      page++; await sleep(400);
-    }
-    mergeExternalItems(items);
-    const connEl = document.getElementById('mal-connected');
-    if (connEl) { connEl.textContent=`✓ ${items.length} anime`; connEl.style.display='block'; }
-    document.getElementById('go-btn').disabled = false;
-    showToast(`MAL: ${items.length} anime loaded`);
-  } catch(e) { showToast('❌ MAL: ' + e.message); }
-  finally { if (btn) { btn.textContent='Fetch'; btn.disabled=false; } }
-}
+// toggleMalInput / connectMAL / fetchMAL replaced by MAL OAuth2 flow above
+
+
 
 function mergeExternalItems(items) {
   loadedFiles = loadedFiles.filter(f => !f._external);
@@ -1197,7 +1307,7 @@ async function syncToAccount() {
   if (connectedAccount.viewOnly) { showToast('View-only — cannot sync'); return; }
   if (!list.length) { showToast('Nothing to sync'); return; }
   if (connectedAccount.type === 'anilist') await syncToAniList();
-  else showToast('MAL write requires OAuth — coming soon');
+  else if (connectedAccount.type === 'mal') await syncToMAL();
 }
 
 async function syncToAniList() {
@@ -1262,9 +1372,68 @@ async function doAniListSync(token) {
   else showToast(`✓ ${ok} changes synced`);
 }
 
-// ══════════════════════════════════════════════
-//  SHARE & EXPORT
-// ══════════════════════════════════════════════
+async function syncToMAL() {
+  const token = connectedAccount?.token || localStorage.getItem('mal_token');
+  if (!token) { connectMALImport(); return; }
+
+  const origMap = window._malOrigMap ?? new Map();
+  const changed = list.filter(a => {
+    if (!a.malId) return false;
+    const orig = origMap.get(a.malId);
+    if (!orig) return true;
+    return orig.status !== a.status || orig.score !== a.score || orig.epCur !== a.epCur;
+  });
+  if (!changed.length) { showToast('No changes to sync'); return; }
+
+  const bar=document.getElementById('fetch-bar'),fill=document.getElementById('fb-fill'),
+        msg=document.getElementById('fetch-msg'),pct=document.getElementById('fetch-pct');
+  bar.style.display='flex';
+  const setBar=(p,m)=>{fill.style.width=p+'%';pct.textContent=p+'%';msg.textContent=m;};
+  setBar(0,`Syncing ${changed.length} MAL changes…`);
+
+  let ok=0, fail=0; const failed=[];
+
+  async function syncOne(a, attempt=0) {
+    try {
+      const body = new URLSearchParams();
+      if (a.status) body.set('status', a.status === 'finished' ? 'completed' : a.status);
+      if (a.score != null) body.set('score', String(a.score));
+      if (a.epCur != null) body.set('num_watched_episodes', String(a.epCur));
+
+      const r = await fetch(`https://api.myanimelist.net/v2/anime/${a.malId}/my_list_status`, {
+        method: 'PATCH',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+      });
+      if (r.status === 401) { localStorage.removeItem('mal_token'); throw new Error('TOKEN_EXPIRED'); }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      origMap.set(a.malId, { status: a.status, score: a.score, epCur: a.epCur });
+      ok++;
+    } catch(e) {
+      if (e.message === 'TOKEN_EXPIRED') { showToast('❌ MAL token expired — reconnect'); bar.style.display='none'; return; }
+      if (attempt < 2) { await sleep(600); return syncOne(a, attempt+1); }
+      fail++; failed.push(a.title ?? a._id);
+    }
+  }
+
+  const BATCH=10, CONCURRENT=2;
+  for (let i=0;i<changed.length;i+=BATCH) {
+    const batch=changed.slice(i,i+BATCH);
+    for (let j=0;j<batch.length;j+=CONCURRENT) {
+      await Promise.all(batch.slice(j,j+CONCURRENT).map(a=>syncOne(a)));
+      await sleep(500); // MAL rate limit is stricter
+    }
+    setBar(Math.round((i+batch.length)/changed.length*95),`Syncing… ${Math.min(i+BATCH,changed.length)}/${changed.length}`);
+  }
+  window._malOrigMap = origMap;
+
+  setBar(100,`Done — ${ok} synced${fail?`, ${fail} failed`:''}`);
+  await sleep(1400); bar.style.display='none';
+  if (fail) showToast(`⚠️ ${fail} failed: ${failed.slice(0,3).join(', ')}${failed.length>3?'…':''}`);
+  else showToast(`✓ ${ok} MAL changes synced`);
+}
+
+
 async function shareList() {
   showToast('⏳ Uploading list…', 60000);
   try {

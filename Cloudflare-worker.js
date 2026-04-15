@@ -13,6 +13,14 @@ export default {
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
     };
+    
+    if (url.pathname === '/mal-token' && request.method === 'POST') {
+      return handleMalToken(request);
+    }
+
+    if (url.pathname === '/mal-proxy') {
+      return handleMalProxy(request);
+    }
 
     if (method === "OPTIONS") return new Response(null, { headers: cors });
 
@@ -70,5 +78,115 @@ function json(obj, status, cors) {
   return new Response(JSON.stringify(obj), {
     status,
     headers: { ...cors, "Content-Type": "application/json" },
+  });
+}
+
+async function handleMalToken(request) {
+  const ALLOWED_ORIGINS = [
+    'https://yourdomain.com',       // <-- replace with your actual site origin(s)
+    'http://localhost:8000',             // local dev
+    'http://127.0.0.1:8000',
+  ];
+
+  const origin = request.headers.get('Origin') ?? '';
+  const corsOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': corsOrigin,
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Vary': 'Origin',
+  };
+
+  // Handle CORS preflight
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
+  try {
+    const { client_id, code, code_verifier, redirect_uri } = await request.json();
+    if (!client_id || !code || !code_verifier || !redirect_uri) {
+      return new Response(JSON.stringify({ error: 'Missing parameters' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Exchange code for token — this is what the browser can't do itself
+    const body = new URLSearchParams({
+      client_id,
+      code,
+      code_verifier,
+      grant_type: 'authorization_code',
+      redirect_uri,
+    });
+
+    const malRes = await fetch('https://myanimelist.net/v1/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+
+    const data = await malRes.json();
+
+    if (!malRes.ok) {
+      return new Response(JSON.stringify({ error: data.error ?? 'MAL token error', detail: data.message }), {
+        status: malRes.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Only forward what the browser needs — don't leak refresh token if you prefer
+    return new Response(JSON.stringify({
+      access_token: data.access_token,
+      refresh_token: data.refresh_token,
+      expires_in: data.expires_in,
+    }), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+
+  } catch (e) {
+    return new Response(JSON.stringify({ error: 'Worker error', detail: e.message }), {
+      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+
+async function handleMalProxy(request) {
+  const origin = request.headers.get('Origin') ?? '';
+
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  };
+
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
+  const token = request.headers.get('Authorization');
+  const url = new URL(request.url);
+  const target = url.searchParams.get('url');
+
+  if (!token || !target) {
+    return new Response(JSON.stringify({ error: 'Missing token or url' }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
+  const malRes = await fetch(target, {
+    headers: { Authorization: token }
+  });
+
+  const data = await malRes.text();
+
+  return new Response(data, {
+    status: malRes.status,
+    headers: {
+      ...corsHeaders,
+      'Content-Type': 'application/json'
+    }
   });
 }

@@ -39,7 +39,7 @@
       <div class="acct-info">
         <div class="acct-label">AniList</div>
       </div>
-      <button class="acct-btn" id="al-connect-btn" onclick="connectAniListImport()">Connect →</button>
+      <button class="acct-btn" id="al-connect-btn" OnClick="connectAniListImport()">Connect →</button>
     </div>
 
     <!-- AniList: connected state (hidden until token verified) -->
@@ -55,16 +55,26 @@
       <button onclick="anilistDisconnect()" style="background:none;border:none;color:var(--text3);font-size:.72rem;cursor:pointer;font-family:'DM Sans',sans-serif;text-decoration:underline;">Not you?</button>
     </div>
 
-    <div class="acct-row" id="mal-row">
+    <!-- MAL: disconnected state -->
+    <div class="acct-row" id="mal-disconnected-row">
       <span class="acct-logo">🔴</span>
       <div class="acct-info">
         <div class="acct-label">MyAnimeList</div>
-        <div class="acct-connected" id="mal-connected" style="display:none"></div>
-        <div id="mal-view-other-wrap" style="display:none;margin-top:5px">
-          <input class="acct-input" id="mal-username" type="text" placeholder="Username" autocomplete="off">
-        </div>
       </div>
-      <button class="acct-btn" id="mal-fetch-btn" onclick="toggleMalInput()">View list →</button>
+      <button class="acct-btn" id="mal-connect-btn" onclick="connectMALImport()">Connect →</button>
+    </div>
+
+    <!-- MAL: connected state -->
+    <div class="acct-row acct-row-connected acct-row-mal" id="mal-connected-row" style="display:none">
+      <span class="acct-logo">🔴</span>
+      <div class="acct-info">
+        <div class="acct-label">MyAnimeList</div>
+        <div class="acct-connected acct-connected-mal" id="mal-connected-name"></div>
+      </div>
+      <button class="acct-btn acct-btn-analyse acct-btn-mal" id="mal-analyse-btn" onclick="analyseMAL()">Analyse list →</button>
+    </div>
+    <div id="mal-not-you-wrap" style="display:none;text-align:right;margin-top:-6px;padding-right:2px">
+      <button onclick="malDisconnect()" style="background:none;border:none;color:var(--text3);font-size:.72rem;cursor:pointer;font-family:'DM Sans',sans-serif;text-decoration:underline;">Not you?</button>
     </div>
   </div>
 
