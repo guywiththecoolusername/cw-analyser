@@ -1345,7 +1345,7 @@ async function doAniListSync(token) {
         headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
         body:JSON.stringify({query:mutation,variables:{
           mediaId:parseInt(a.anilistId), status:toAlStatus(a.status),
-          score:a.score != null ? Math.round(a.score) : 0, progress:a.epCur??0}})});
+          score:a.score != null ? Math.round(a.score * 10) : 0, progress:a.epCur??0}})});
       if (r.status===401) { localStorage.removeItem('anilist_token'); throw new Error('TOKEN_EXPIRED'); }
       const json=await r.json();
       if (json.errors) throw new Error(json.errors[0].message);
