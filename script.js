@@ -62,7 +62,7 @@ async function verifyAniListToken(token) {
     const r = await fetch('https://graphql.anilist.co/',{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
-      body:JSON.stringify({query:'query{Viewer{name}}'})
+      body:JSON.stringify({query:'query{Viewer{name mediaListOptions{scoreFormat}}}'})
     });
     if (r.status === 401) { 
       localStorage.removeItem('anilist_token'); 
@@ -70,7 +70,8 @@ async function verifyAniListToken(token) {
     }
     const {data} = await r.json();
     const username = data?.Viewer?.name ?? 'AniList';
-    setConnected({type:'anilist', username, token, viewOnly:false});
+    const scoreFormat = data?.Viewer?.mediaListOptions?.scoreFormat ?? 'POINT_10';
+    setConnected({type:'anilist', username, token, viewOnly:false, scoreFormat});
     showAniListConnected(username);
   } catch (e) {
     console.error('AL Verify Error', e);
@@ -908,7 +909,6 @@ function makeCard(a,i,isNil=false) {
   // Simple fade-in, no stagger delay
   el.style.animation = 'fadeUp .15s ease both';
   
-  if(isMobile()&&!isNil) el.onclick=()=>openSheet(a);
   if(isNil&&a._isPreview) el.onclick=()=>stageFromPreview(a);
 
   const prog=a.prog??(a.timeTotSec>0?Math.round(a.timeCurSec/a.timeTotSec*100):0);
@@ -1204,12 +1204,28 @@ function connectAniListImport() {
 
 function connectMAL() { showToast('Use the Connect button in the import screen'); }
 
-function alScore(s) {
+function alScore(s, fmt) {
   if (!s || s === 0) return null;
-  // scoreRaw is always 0–100 regardless of user's scoring format.
-  // Divide by 10 and round to 1 decimal to get our internal 0–10 scale.
-  const score = Math.round((s / 10) * 10) / 10;
-  return score <= 0 ? null : Math.min(10, score);
+  switch (fmt) {
+    case 'POINT_100':        return Math.round(s / 10) || null;
+    case 'POINT_10_DECIMAL': return Math.round(s * 10) / 10 || null;
+    case 'POINT_10':
+    case 'POINT_5':
+    case 'POINT_3':
+    default:                 return s || null;
+  }
+}
+
+function toAlScore(s, fmt) {
+  if (s == null) return 0;
+  switch (fmt) {
+    case 'POINT_100':      return Math.round(s * 10); // 7.5 → 75
+    case 'POINT_10_DECIMAL': return Math.round(s * 10) / 10; // keep 1 decimal
+    case 'POINT_10':       return Math.round(s);
+    case 'POINT_5':        return Math.round(s); // stored as-is
+    case 'POINT_3':        return Math.round(s); // stored as-is
+    default:               return Math.round(s);
+  }
 }
 function alStatus(s){
   return {CURRENT:'watching',COMPLETED:'finished',PAUSED:'on_hold',
@@ -1231,7 +1247,8 @@ async function fetchAniListByUser(username, viewOnly=false, token=null) {
   // Simplified query - gutted the custom list stuff
   const query = `query($name:String){
     MediaListCollection(userName:$name,type:ANIME){
-      lists{ name status entries{ mediaId scoreRaw score status progress
+      user{ mediaListOptions{ scoreFormat } }
+      lists{ name status entries{ mediaId score status progress
           media{ idMal title{romaji english native userPreferred}
             coverImage{large extraLarge} episodes format genres tags{name rank}
             startDate{year} studios{nodes{name isAnimationStudio}} } } } } }`;
@@ -1249,6 +1266,10 @@ async function fetchAniListByUser(username, viewOnly=false, token=null) {
     if (errors) throw new Error(errors[0].message);
     const lists = data?.MediaListCollection?.lists ?? [];
     if (!lists.length) throw new Error('No anime found');
+    const scoreFormat = data?.MediaListCollection?.user?.mediaListOptions?.scoreFormat
+      ?? connectedAccount?.scoreFormat ?? 'POINT_10';
+    // Store on connectedAccount so sync can use it too
+    if (connectedAccount?.type === 'anilist') connectedAccount.scoreFormat = scoreFormat;
 
     const items = [];
     const origMap = new Map();
@@ -1266,7 +1287,7 @@ async function fetchAniListByUser(username, viewOnly=false, token=null) {
           epCur:e.progress??null, epTot:m.episodes??null,
           epSub:null, epDub:null, epWatched:e.progress??null,
           timeCur:null,timeTot:null,timeCurSec:0,timeTotSec:0,prog:null,
-          status:alStatus(e.status), score:alScore(e.scoreRaw),
+          status:alStatus(e.status), score:alScore(e.score, scoreFormat),
           startDate:m.startDate?.year?`${m.startDate.year}-01-01`:null, finishDate:null,
           rewatching:e.status==='REPEATING', rank:null, rankLabel:null, prefix:null,
           fromCw:false, fromWl:true,
@@ -1333,6 +1354,8 @@ async function doAniListSync(token) {
   const setBar=(p,m)=>{fill.style.width=p+'%';pct.textContent=p+'%';msg.textContent=m;};
   setBar(0,`Syncing ${changed.length} changes…`);
 
+  const scoreFormat = connectedAccount?.scoreFormat ?? 'POINT_10';
+
   const mutation=`mutation($mediaId:Int,$status:MediaListStatus,$score:Float,$progress:Int){
     SaveMediaListEntry(mediaId:$mediaId,status:$status,score:$score,progress:$progress){id status score progress}}`;
 
@@ -1345,7 +1368,7 @@ async function doAniListSync(token) {
         headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
         body:JSON.stringify({query:mutation,variables:{
           mediaId:parseInt(a.anilistId), status:toAlStatus(a.status),
-          score:a.score != null ? Math.round(a.score * 10) : 0, progress:a.epCur??0}})});
+          score:toAlScore(a.score, scoreFormat), progress:a.epCur??0}})});
       if (r.status===401) { localStorage.removeItem('anilist_token'); throw new Error('TOKEN_EXPIRED'); }
       const json=await r.json();
       if (json.errors) throw new Error(json.errors[0].message);
