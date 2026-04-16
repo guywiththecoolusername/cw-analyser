@@ -10,8 +10,8 @@ export default {
 
     const cors = {
       "Access-Control-Allow-Origin":  "*",
-      "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
     };
     
     if (url.pathname === '/mal-token' && request.method === 'POST') {
@@ -157,7 +157,7 @@ async function handleMalProxy(request) {
 
   const corsHeaders = {
     'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Methods': 'GET, PATCH, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   };
 
@@ -176,18 +176,9 @@ async function handleMalProxy(request) {
     });
   }
 
-  const fetchOptions = {
-    method: request.method,
-    headers: { Authorization: token },
-  };
-
-  // Forward body and Content-Type for PATCH/POST requests
-  if (request.method === 'PATCH' || request.method === 'POST') {
-    fetchOptions.headers['Content-Type'] = request.headers.get('Content-Type') ?? 'application/x-www-form-urlencoded';
-    fetchOptions.body = await request.text();
-  }
-
-  const malRes = await fetch(target, fetchOptions);
+  const malRes = await fetch(target, {
+    headers: { Authorization: token }
+  });
 
   const data = await malRes.text();
 

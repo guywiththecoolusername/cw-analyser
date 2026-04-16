@@ -1204,13 +1204,14 @@ function connectAniListImport() {
 
 function connectMAL() { showToast('Use the Connect button in the import screen'); }
 
-function alScore(s) {
+ function alScore(s) {
   if (!s || s === 0) return null;
-  // scoreRaw is always 0–100 regardless of user's scoring format.
-  // Divide by 10 and round to 1 decimal to get our internal 0–10 scale.
-  const score = Math.round((s / 10) * 10) / 10;
-  return score <= 0 ? null : Math.min(10, score);
-}
+  // If score is > 10 (e.g., 85/100), divide by 10.
+  // If it's already 1-10, keep it as is.
+
+  let score = s > 10 ? Math.round(s / 10) : Math.round(s);
+  return Math.max(1, Math.min(10, score)); // Clamp between 1-10
+} 
 function alStatus(s){
   return {CURRENT:'watching',COMPLETED:'finished',PAUSED:'on_hold',
           DROPPED:'dropped',PLANNING:'plan_to_watch',REPEATING:'watching'}[s] ?? null;
@@ -1231,7 +1232,7 @@ async function fetchAniListByUser(username, viewOnly=false, token=null) {
   // Simplified query - gutted the custom list stuff
   const query = `query($name:String){
     MediaListCollection(userName:$name,type:ANIME){
-      lists{ name status entries{ mediaId scoreRaw score status progress
+      lists{ name status entries{ mediaId score status progress
           media{ idMal title{romaji english native userPreferred}
             coverImage{large extraLarge} episodes format genres tags{name rank}
             startDate{year} studios{nodes{name isAnimationStudio}} } } } } }`;
@@ -1266,7 +1267,7 @@ async function fetchAniListByUser(username, viewOnly=false, token=null) {
           epCur:e.progress??null, epTot:m.episodes??null,
           epSub:null, epDub:null, epWatched:e.progress??null,
           timeCur:null,timeTot:null,timeCurSec:0,timeTotSec:0,prog:null,
-          status:alStatus(e.status), score:alScore(e.scoreRaw),
+          status:alStatus(e.status), score:alScore(e.score),
           startDate:m.startDate?.year?`${m.startDate.year}-01-01`:null, finishDate:null,
           rewatching:e.status==='REPEATING', rank:null, rankLabel:null, prefix:null,
           fromCw:false, fromWl:true,
@@ -1345,7 +1346,7 @@ async function doAniListSync(token) {
         headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
         body:JSON.stringify({query:mutation,variables:{
           mediaId:parseInt(a.anilistId), status:toAlStatus(a.status),
-          score:a.score != null ? Math.round(a.score) : 0, progress:a.epCur??0}})});
+          score:a.score?a.score*10:0, progress:a.epCur??0}})});
       if (r.status===401) { localStorage.removeItem('anilist_token'); throw new Error('TOKEN_EXPIRED'); }
       const json=await r.json();
       if (json.errors) throw new Error(json.errors[0].message);
@@ -1401,8 +1402,7 @@ async function syncToMAL() {
       if (a.score != null) body.set('score', String(a.score));
       if (a.epCur != null) body.set('num_watched_episodes', String(a.epCur));
 
-      const targetUrl = `https://api.myanimelist.net/v2/anime/${a.malId}/my_list_status`;
-      const r = await fetch(`${WORKER}/mal-proxy?url=${encodeURIComponent(targetUrl)}`, {
+      const r = await fetch(`https://api.myanimelist.net/v2/anime/${a.malId}/my_list_status`, {
         method: 'PATCH',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
         body,
